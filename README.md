@@ -1,58 +1,62 @@
 # MasterOfDrums Pipeline
 
-Standalone pipeline/service project for background processing, chart ingestion, workflow orchestration, and operational APIs.
+Standalone, headless pipeline service for MasterOfDrums background processing.
 
-## Purpose
+## MVP Direction
 
-This repository is the system of record for background processing and business workflow related to MasterOfDrums.
+This repository is being built as a **CLI + worker + SQLite** application first.
 
-It is intentionally independent from:
+For MVP, the priorities are:
+
+1. durable database-backed workflow state
+2. job orchestration and retries
+3. chart ingestion and normalization
+4. a command-line operational surface
+
+Not in the immediate MVP:
+
+- web server
+- admin UI
+- auth layer for remote callers
+
+Those can be added later on top of the same domain/application/database core.
+
+## Why This Exists
+
+The pipeline is intended to become the system of record for background processing and workflow state.
+
+It must run independently from:
 
 - the macOS gameplay/admin app
-- any future web/admin UI
-- macro/automation triggers
+- future admin UI surfaces
+- macros or trigger layers
 
-Those systems should call into this service through stable APIs/events, not host the core runtime.
+Those systems should eventually act as clients of the pipeline, not host its core logic.
 
-## Initial Scope
+## Runtime Shape
 
-Phase 1 focuses on creating the standalone service boundary and core module structure for:
+This project should become a headless Swift executable that supports commands like:
 
-- chart ingestion
-- chart normalization/validation
-- job orchestration
-- durable job state
-- observability
-- operational control APIs
+- `masterofdrums-pipeline init-db`
+- `masterofdrums-pipeline worker`
+- `masterofdrums-pipeline enqueue-chart-ingest --source-uri ...`
+- `masterofdrums-pipeline list-jobs`
+- `masterofdrums-pipeline show-job <job-id>`
 
-## Recommended Runtime
-
-Because the current product code is already Swift-based, the recommended first implementation is a Swift server/service using Swift Package Manager, with modules separated for domain logic, application services, infrastructure, and HTTP APIs.
-
-Suggested stack:
+## Recommended Stack
 
 - Swift 5.9+
 - Swift Package Manager
-- Async/await + actors for concurrency boundaries
-- SQLite or Postgres for durable state
-- Structured JSON logging
-- OpenTelemetry-compatible observability later
+- SQLite from day one
+- async/await for workflow and worker coordination
+- structured logging
 
-## Architectural Principles
+## Modules
 
-1. Pipeline is deployable on its own.
-2. Admin UI is optional and external.
-3. Macros/automations trigger work, but do not become the workflow engine.
-4. Background jobs are durable, retryable, and inspectable.
-5. Domain logic stays reusable and transport-agnostic.
-
-## Proposed Modules
-
-- `PipelineDomain` — core entities and workflow contracts
-- `PipelineApplication` — use cases / orchestration services
-- `PipelineInfrastructure` — persistence, queues, adapters, logging
-- `PipelineHTTP` — operational/admin-facing API surface
-- `PipelineRuntime` — worker runtime and bootstrap
+- `PipelineDomain` — core models and workflow state
+- `PipelineApplication` — use cases and repository contracts
+- `PipelineInfrastructure` — SQLite, migrations, persistence, logging
+- `PipelineRuntime` — CLI commands, worker runtime, startup orchestration
 - `PipelineService` — executable entry point
 
 ## Project Layout
@@ -62,76 +66,81 @@ Sources/
   PipelineDomain/
   PipelineApplication/
   PipelineInfrastructure/
-  PipelineHTTP/
   PipelineRuntime/
   PipelineService/
 Docs/
   architecture/
-  api/
+  database/
+  interfaces/
 Config/
   pipeline.example.env
 ```
 
-## Example Responsibilities
+## Database-First MVP
 
-### Runtime
-- start workers
-- poll/claim jobs
-- execute retries/backoff
-- expose health/ready state
+The MVP should use a real SQLite database immediately.
 
-### Orchestration
-- submit ingest/process/publish jobs
-- coordinate multi-step workflows
-- enforce idempotency
+Primary state expected in the database:
 
-### Storage / State
 - jobs
-- workflow executions
-- artifacts/asset references
-- audit trail / events
+- workflows
+- workflow events
+- artifacts / source references
+- idempotency keys
+- schema migrations
 
-### API Surface
-- create jobs
-- query job/workflow status
-- trigger reprocess/retry/cancel actions
-- manage health/admin operations
+Large files should not be stored in SQLite unless there is a specific reason. Prefer storing file/object references plus metadata.
 
-## Admin UI Integration
+## CLI-First MVP
 
-The future admin UI should communicate with this service over authenticated HTTP APIs and/or event streams.
+The command line is the first operational surface.
 
-The UI should:
+Example commands:
 
-- submit commands
-- read workflow/job status
-- inspect artifacts, logs, and failures
+1. `init-db`
+   - create database file if missing
+   - apply schema migrations
 
-The UI should not:
+2. `worker`
+   - poll queued jobs
+   - claim and execute work
+   - update durable status and retry metadata
 
-- own workflow state
-- run background work itself
-- become the source of truth for retries or orchestration
+3. `enqueue-chart-ingest`
+   - insert a workflow
+   - insert the initial job
 
-## Macro / Automation Integration
+4. `list-jobs`
+   - inspect queued/running/failed work
 
-Macros should act only as external trigger/control clients.
+5. `show-job`
+   - inspect one job in detail
 
-Examples:
+## Future Interfaces
 
-- enqueue chart ingestion
-- request reprocessing for a track
-- pause/resume a worker class
-- annotate a workflow with metadata
+A web/API layer may be added later for:
 
-Macros should not contain the business workflow logic itself.
+- admin UI
+- macro triggers
+- external integrations
 
-## Bootstrap
+But that is intentionally deferred until the database and worker core are solid.
 
-1. Fill in persistence implementation.
-2. Add HTTP server package and wire endpoints.
-3. Add worker loop + retry policy.
-4. Add ingestion adapters for current chart formats.
-5. Connect main app/admin UI as an API client instead of embedding authoring workflow logic.
+## Current Status
 
-See `Docs/architecture/standalone-pipeline-plan.md` and `Docs/api/interface-outline.md`.
+Implemented so far:
+
+- initial standalone repo scaffold
+- domain/application/runtime structure
+- SQLite schema definition and DB-first docs
+- CLI-oriented runtime direction
+
+Still to implement:
+
+- actual SQLite access layer
+- migrations runner
+- worker loop
+- chart ingestion port from the main app
+- retry policies and state transitions
+
+See `Docs/architecture/standalone-pipeline-plan.md`, `Docs/database/sqlite-schema.md`, and `Docs/interfaces/cli-interface-outline.md`.

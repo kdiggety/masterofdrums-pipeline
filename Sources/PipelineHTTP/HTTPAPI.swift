@@ -1,11 +1,9 @@
 import Foundation
 
-public struct HTTPAPIConfiguration: Sendable {
-    public let bindHost: String
-    public let bindPort: Int
-
-    public init(bindHost: String, bindPort: Int) {
-        self.bindHost = bindHost
-        self.bindPort = bindPort
-    }
+// Deferred on purpose.
+// The current MVP is CLI + worker + SQLite.
+// If an HTTP layer is added later, it should be a thin transport wrapper
+// over the same application and database core rather than a new core runtime.
+public struct HTTPAPIDeferredPlaceholder {
+    public init() {}
 }

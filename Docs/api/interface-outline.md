@@ -1,75 +1,23 @@
-# API Interface Outline
+# API Interface Outline (Deferred)
 
-## Health
+This document is intentionally deferred.
 
-### `GET /healthz`
-Liveness check.
+The current MVP direction for `masterofdrums-pipeline` is:
 
-### `GET /readyz`
-Readiness check.
+1. SQLite first
+2. CLI operational surface first
+3. worker/runtime first
+4. no immediate web server implementation
 
-## Jobs
+A future HTTP/API layer may still be added later for:
 
-### `POST /v1/jobs/chart-ingest`
-Create a chart ingestion job.
+- admin UI integration
+- macro/automation triggers
+- remote operational control
 
-Request body:
+If/when that happens, the API should wrap the same domain/application/database core rather than introducing new orchestration logic.
 
-```json
-{
-  "sourceType": "midi|chart-json|audio+chart",
-  "sourceUri": "file:///tmp/example.mid",
-  "requestedBy": "admin-ui|macro|system",
-  "idempotencyKey": "optional-string",
-  "metadata": {
-    "trackId": "optional",
-    "chartId": "optional"
-  }
-}
-```
+For the active MVP interface, see:
 
-Response:
-
-```json
-{
-  "jobId": "job_123",
-  "workflowId": "wf_123",
-  "status": "queued"
-}
-```
-
-### `GET /v1/jobs/{jobId}`
-Fetch job status, attempts, timestamps, and last error.
-
-### `POST /v1/jobs/{jobId}/retry`
-Request manual retry.
-
-### `POST /v1/jobs/{jobId}/cancel`
-Request cancellation.
-
-## Workflows
-
-### `GET /v1/workflows/{workflowId}`
-Fetch workflow state and child jobs.
-
-### `GET /v1/workflows/{workflowId}/events`
-Fetch timeline/audit events.
-
-## Admin Operations
-
-### `POST /v1/admin/workers/pause`
-Pause worker consumption.
-
-### `POST /v1/admin/workers/resume`
-Resume worker consumption.
-
-### `GET /v1/admin/runtime`
-Return runtime, queue, and storage state summary.
-
-## Auth
-
-Initial recommendation:
-
-- token-based auth for service-to-service calls
-- optional unauthenticated local development mode
-- later: scoped service accounts / JWT / mTLS depending on deployment model
+- `Docs/interfaces/cli-interface-outline.md`
+- `Docs/database/sqlite-schema.md`

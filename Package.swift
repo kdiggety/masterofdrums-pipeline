@@ -11,7 +11,6 @@ let package = Package(
         .library(name: "PipelineDomain", targets: ["PipelineDomain"]),
         .library(name: "PipelineApplication", targets: ["PipelineApplication"]),
         .library(name: "PipelineInfrastructure", targets: ["PipelineInfrastructure"]),
-        .library(name: "PipelineHTTP", targets: ["PipelineHTTP"]),
         .library(name: "PipelineRuntime", targets: ["PipelineRuntime"])
     ],
     targets: [
@@ -30,18 +29,13 @@ let package = Package(
             path: "Sources/PipelineInfrastructure"
         ),
         .target(
-            name: "PipelineHTTP",
-            dependencies: ["PipelineDomain", "PipelineApplication"],
-            path: "Sources/PipelineHTTP"
-        ),
-        .target(
             name: "PipelineRuntime",
             dependencies: ["PipelineDomain", "PipelineApplication", "PipelineInfrastructure"],
             path: "Sources/PipelineRuntime"
         ),
         .executableTarget(
             name: "PipelineService",
-            dependencies: ["PipelineRuntime", "PipelineHTTP", "PipelineInfrastructure"],
+            dependencies: ["PipelineRuntime"],
             path: "Sources/PipelineService"
         )
     ]
