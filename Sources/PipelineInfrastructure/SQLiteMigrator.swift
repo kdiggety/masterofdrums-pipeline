@@ -44,7 +44,8 @@ public final class SQLiteMigrator: DatabaseMigrator, @unchecked Sendable {
         throw SQLiteDatabaseError.stepFailed(String(cString: sqlite3_errmsg(handle)))
     }
 
-    public static let initialSchemaSQL: String = #"PRAGMA foreign_keys = ON;
+    public static let initialSchemaSQL: String = #"""
+PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS schema_migrations (
     version TEXT PRIMARY KEY,
@@ -151,5 +152,5 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (
     FOREIGN KEY (workflow_id) REFERENCES workflows(id),
     FOREIGN KEY (job_id) REFERENCES jobs(id)
 );
-"#
+"""#
 }
