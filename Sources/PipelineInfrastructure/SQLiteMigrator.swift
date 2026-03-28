@@ -3,15 +3,45 @@ import PipelineApplication
 
 public final class SQLiteMigrator: DatabaseMigrator, @unchecked Sendable {
     public let database: SQLiteDatabase
+    private let initialSchemaVersion = "001_initial_schema"
 
     public init(database: SQLiteDatabase) {
         self.database = database
     }
 
     public func applyMigrations() async throws {
-        try database.ensureParentDirectoryExists()
-        // Real SQLite execution will be wired here.
-        // MVP contract: the app owns migration application and DB bootstrap.
+        try database.withConnection { handle in
+            try database.execute("CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, applied_at TEXT NOT NULL);", on: handle)
+
+            let alreadyApplied = try migrationExists(version: initialSchemaVersion, on: handle)
+            guard !alreadyApplied else { return }
+
+            try database.execute(Self.initialSchemaSQL, on: handle)
+
+            let statement = try database.prepare(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?);",
+                on: handle
+            )
+            defer { sqlite3_finalize(statement) }
+
+            try database.bind(text: initialSchemaVersion, at: 1, in: statement, on: handle)
+            try database.bind(text: database.iso8601String(from: Date()), at: 2, in: statement, on: handle)
+            try database.stepExpectDone(statement, on: handle)
+        }
+    }
+
+    private func migrationExists(version: String, on handle: OpaquePointer) throws -> Bool {
+        let statement = try database.prepare(
+            "SELECT 1 FROM schema_migrations WHERE version = ? LIMIT 1;",
+            on: handle
+        )
+        defer { sqlite3_finalize(statement) }
+
+        try database.bind(text: version, at: 1, in: statement, on: handle)
+        let result = sqlite3_step(statement)
+        if result == SQLITE_ROW { return true }
+        if result == SQLITE_DONE { return false }
+        throw SQLiteDatabaseError.stepFailed(String(cString: sqlite3_errmsg(handle)))
     }
 
     public static let initialSchemaSQL: String = #"PRAGMA foreign_keys = ON;

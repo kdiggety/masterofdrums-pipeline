@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 import PipelineApplication
 import PipelineDomain
 
@@ -10,8 +11,30 @@ public actor SQLiteWorkflowStore: WorkflowStore {
     }
 
     public func insert(_ workflow: PipelineWorkflow) async throws {
-        _ = database
-        // Real SQLite insert implementation to be added next.
+        try database.withConnection { handle in
+            let statement = try database.prepare(
+                """
+                INSERT INTO workflows (
+                    id, name, status, requested_by, idempotency_key,
+                    created_at, updated_at, started_at, completed_at, last_error
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                """,
+                on: handle
+            )
+            defer { sqlite3_finalize(statement) }
+
+            try database.bind(text: workflow.id, at: 1, in: statement, on: handle)
+            try database.bind(text: workflow.name, at: 2, in: statement, on: handle)
+            try database.bind(text: workflow.status.rawValue, at: 3, in: statement, on: handle)
+            try database.bind(text: workflow.requestedBy, at: 4, in: statement, on: handle)
+            try database.bind(text: workflow.idempotencyKey, at: 5, in: statement, on: handle)
+            try database.bind(text: database.iso8601String(from: workflow.createdAt), at: 6, in: statement, on: handle)
+            try database.bind(text: database.iso8601String(from: workflow.updatedAt), at: 7, in: statement, on: handle)
+            try database.bind(text: database.iso8601String(from: workflow.startedAt), at: 8, in: statement, on: handle)
+            try database.bind(text: database.iso8601String(from: workflow.completedAt), at: 9, in: statement, on: handle)
+            try database.bind(text: workflow.lastError, at: 10, in: statement, on: handle)
+            try database.stepExpectDone(statement, on: handle)
+        }
     }
 }
 
@@ -23,19 +46,142 @@ public actor SQLiteJobStore: JobStore {
     }
 
     public func enqueue(_ job: PipelineJob) async throws {
-        _ = database
-        // Real SQLite insert implementation to be added next.
+        try database.withConnection { handle in
+            let statement = try database.prepare(
+                """
+                INSERT INTO jobs (
+                    id, workflow_id, type, status, attempt, max_attempts, priority,
+                    run_after, claimed_at, claimed_by, created_at, updated_at,
+                    started_at, completed_at, last_error, payload_json, result_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                """,
+                on: handle
+            )
+            defer { sqlite3_finalize(statement) }
+
+            try database.bind(text: job.id, at: 1, in: statement, on: handle)
+            try database.bind(text: job.workflowID, at: 2, in: statement, on: handle)
+            try database.bind(text: job.type.rawValue, at: 3, in: statement, on: handle)
+            try database.bind(text: job.status.rawValue, at: 4, in: statement, on: handle)
+            try database.bind(int: job.attempt, at: 5, in: statement, on: handle)
+            try database.bind(int: job.maxAttempts, at: 6, in: statement, on: handle)
+            try database.bind(int: job.priority, at: 7, in: statement, on: handle)
+            try database.bind(text: database.iso8601String(from: job.runAfter), at: 8, in: statement, on: handle)
+            try database.bind(text: database.iso8601String(from: job.claimedAt), at: 9, in: statement, on: handle)
+            try database.bind(text: job.claimedBy, at: 10, in: statement, on: handle)
+            try database.bind(text: database.iso8601String(from: job.createdAt), at: 11, in: statement, on: handle)
+            try database.bind(text: database.iso8601String(from: job.updatedAt), at: 12, in: statement, on: handle)
+            try database.bind(text: database.iso8601String(from: job.startedAt), at: 13, in: statement, on: handle)
+            try database.bind(text: database.iso8601String(from: job.completedAt), at: 14, in: statement, on: handle)
+            try database.bind(text: job.lastError, at: 15, in: statement, on: handle)
+            try database.bind(text: job.payloadJSON, at: 16, in: statement, on: handle)
+            try database.bind(text: job.resultJSON, at: 17, in: statement, on: handle)
+            try database.stepExpectDone(statement, on: handle)
+        }
     }
 
     public func list(status: PipelineJobStatus?) async throws -> [PipelineJob] {
-        _ = database
-        _ = status
-        return []
+        try database.withConnection { handle in
+            let sql: String
+            if status != nil {
+                sql = """
+                SELECT id, workflow_id, type, status, attempt, max_attempts, priority,
+                       run_after, claimed_at, claimed_by, created_at, updated_at,
+                       started_at, completed_at, last_error, payload_json, result_json
+                FROM jobs
+                WHERE status = ?
+                ORDER BY created_at DESC;
+                """
+            } else {
+                sql = """
+                SELECT id, workflow_id, type, status, attempt, max_attempts, priority,
+                       run_after, claimed_at, claimed_by, created_at, updated_at,
+                       started_at, completed_at, last_error, payload_json, result_json
+                FROM jobs
+                ORDER BY created_at DESC;
+                """
+            }
+
+            let statement = try database.prepare(sql, on: handle)
+            defer { sqlite3_finalize(statement) }
+
+            if let status {
+                try database.bind(text: status.rawValue, at: 1, in: statement, on: handle)
+            }
+
+            var jobs: [PipelineJob] = []
+            while true {
+                let result = sqlite3_step(statement)
+                if result == SQLITE_ROW {
+                    jobs.append(try decodeJob(from: statement))
+                } else if result == SQLITE_DONE {
+                    break
+                } else {
+                    throw SQLiteDatabaseError.stepFailed(String(cString: sqlite3_errmsg(handle)))
+                }
+            }
+            return jobs
+        }
     }
 
     public func find(id: String) async throws -> PipelineJob? {
-        _ = database
-        _ = id
-        return nil
+        try database.withConnection { handle in
+            let statement = try database.prepare(
+                """
+                SELECT id, workflow_id, type, status, attempt, max_attempts, priority,
+                       run_after, claimed_at, claimed_by, created_at, updated_at,
+                       started_at, completed_at, last_error, payload_json, result_json
+                FROM jobs
+                WHERE id = ?
+                LIMIT 1;
+                """,
+                on: handle
+            )
+            defer { sqlite3_finalize(statement) }
+
+            try database.bind(text: id, at: 1, in: statement, on: handle)
+            let result = sqlite3_step(statement)
+            if result == SQLITE_ROW {
+                return try decodeJob(from: statement)
+            }
+            if result == SQLITE_DONE {
+                return nil
+            }
+            throw SQLiteDatabaseError.stepFailed(String(cString: sqlite3_errmsg(handle)))
+        }
+    }
+
+    private func decodeJob(from statement: OpaquePointer) throws -> PipelineJob {
+        let type = PipelineJobType(rawValue: string(at: 2, in: statement)) ?? .chartIngest
+        let status = PipelineJobStatus(rawValue: string(at: 3, in: statement)) ?? .queued
+
+        return PipelineJob(
+            id: string(at: 0, in: statement),
+            workflowID: string(at: 1, in: statement),
+            type: type,
+            status: status,
+            attempt: Int(sqlite3_column_int64(statement, 4)),
+            maxAttempts: Int(sqlite3_column_int64(statement, 5)),
+            priority: Int(sqlite3_column_int64(statement, 6)),
+            runAfter: database.date(from: optionalString(at: 7, in: statement)) ?? Date(),
+            claimedAt: database.date(from: optionalString(at: 8, in: statement)),
+            claimedBy: optionalString(at: 9, in: statement),
+            createdAt: database.date(from: optionalString(at: 10, in: statement)) ?? Date(),
+            updatedAt: database.date(from: optionalString(at: 11, in: statement)) ?? Date(),
+            startedAt: database.date(from: optionalString(at: 12, in: statement)),
+            completedAt: database.date(from: optionalString(at: 13, in: statement)),
+            lastError: optionalString(at: 14, in: statement),
+            payloadJSON: string(at: 15, in: statement),
+            resultJSON: optionalString(at: 16, in: statement)
+        )
+    }
+
+    private func string(at index: Int32, in statement: OpaquePointer) -> String {
+        optionalString(at: index, in: statement) ?? ""
+    }
+
+    private func optionalString(at index: Int32, in statement: OpaquePointer) -> String? {
+        guard let pointer = sqlite3_column_text(statement, index) else { return nil }
+        return String(cString: pointer)
     }
 }

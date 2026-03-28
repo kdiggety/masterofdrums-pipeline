@@ -26,7 +26,10 @@ let package = Package(
         .target(
             name: "PipelineInfrastructure",
             dependencies: ["PipelineDomain", "PipelineApplication"],
-            path: "Sources/PipelineInfrastructure"
+            path: "Sources/PipelineInfrastructure",
+            linkerSettings: [
+                .linkedLibrary("sqlite3")
+            ]
         ),
         .target(
             name: "PipelineRuntime",

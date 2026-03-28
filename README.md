@@ -137,10 +137,28 @@ Implemented so far:
 
 Still to implement:
 
-- actual SQLite access layer
-- migrations runner
 - worker loop
 - chart ingestion port from the main app
 - retry policies and state transitions
+
+## Current Testable Slice
+
+The repo is now aimed at a first testable CLI + SQLite slice:
+
+1. `init-db`
+2. `enqueue-chart-ingest`
+3. `list-jobs`
+4. `show-job`
+
+Example flow:
+
+```bash
+swift run MasterOfDrumsPipeline init-db
+swift run MasterOfDrumsPipeline enqueue-chart-ingest --source-uri file:///tmp/test.mid --source-type midi --requested-by cli
+swift run MasterOfDrumsPipeline list-jobs
+swift run MasterOfDrumsPipeline show-job <job-id>
+```
+
+Note: this assumes Swift and SQLite development libraries are available on the machine.
 
 See `Docs/architecture/standalone-pipeline-plan.md`, `Docs/database/sqlite-schema.md`, and `Docs/interfaces/cli-interface-outline.md`.
