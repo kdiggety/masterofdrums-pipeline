@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 import PipelineApplication
 
 public final class SQLiteMigrator: DatabaseMigrator, @unchecked Sendable {
