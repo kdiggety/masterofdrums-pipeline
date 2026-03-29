@@ -1,17 +1,20 @@
 import Foundation
 import PipelineRuntime
 
-@main
-struct MasterOfDrumsPipelineMain {
-    static func main() async {
-        let command = PipelineCLIParser.parse(arguments: CommandLine.arguments)
-        let runtime = PipelineRuntime()
+let command = PipelineCLIParser.parse(arguments: CommandLine.arguments)
+let runtime = PipelineRuntime()
+let semaphore = DispatchSemaphore(value: 0)
+var exitCode: Int32 = 0
 
-        do {
-            try await runtime.run(command: command)
-        } catch {
-            fputs("[pipeline] error: \(error.localizedDescription)\n", stderr)
-            Foundation.exit(1)
-        }
+Task {
+    do {
+        try await runtime.run(command: command)
+    } catch {
+        fputs("[pipeline] error: \(error.localizedDescription)\n", stderr)
+        exitCode = 1
     }
+    semaphore.signal()
 }
+
+semaphore.wait()
+Foundation.exit(exitCode)
