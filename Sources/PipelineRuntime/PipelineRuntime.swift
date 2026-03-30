@@ -373,8 +373,7 @@ public struct PipelineRuntime {
 
     private static func sampleRate(from formatDescriptions: [Any]?) -> Double? {
         guard let descriptions = formatDescriptions else { return nil }
-        for description in descriptions {
-            guard let description = description as? CMFormatDescription else { continue }
+        for case let description as CMFormatDescription in descriptions {
             if let stream = CMAudioFormatDescriptionGetStreamBasicDescription(description)?.pointee {
                 return stream.mSampleRate
             }
@@ -384,8 +383,7 @@ public struct PipelineRuntime {
 
     private static func channelCount(from formatDescriptions: [Any]?) -> Int? {
         guard let descriptions = formatDescriptions else { return nil }
-        for description in descriptions {
-            guard let description = description as? CMFormatDescription else { continue }
+        for case let description as CMFormatDescription in descriptions {
             if let stream = CMAudioFormatDescriptionGetStreamBasicDescription(description)?.pointee {
                 return Int(stream.mChannelsPerFrame)
             }
