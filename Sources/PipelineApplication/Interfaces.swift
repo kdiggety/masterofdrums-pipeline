@@ -17,7 +17,7 @@ public protocol JobStore: Sendable {
     func find(id: String) async throws -> PipelineJob?
     func claimNextRunnable(workerID: String, now: Date) async throws -> PipelineJob?
     func markSucceeded(id: String, completedAt: Date, resultJSON: String) async throws
-    func markFailed(id: String, completedAt: Date, errorMessage: String) async throws
+    func markFailed(id: String, completedAt: Date, errorMessage: String, retryAt: Date?) async throws
 }
 
 public struct EnqueueChartIngestRequest: Sendable {

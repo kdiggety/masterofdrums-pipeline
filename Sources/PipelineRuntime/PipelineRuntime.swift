@@ -1,4 +1,9 @@
 import Foundation
+#if canImport(Glibc)
+import Glibc
+#elseif canImport(Darwin)
+import Darwin
+#endif
 import PipelineApplication
 import PipelineDomain
 import PipelineInfrastructure
@@ -87,14 +92,20 @@ public struct PipelineRuntime {
 
     private func runWorkerLoop() async throws {
         let workerID = Self.defaultWorkerID()
+        let pollInterval = Self.workerPollInterval
+        let signalMonitor = WorkerSignalMonitor.install()
+        var idlePolls = 0
+
         print("[pipeline] worker starting")
         print("[pipeline] database: \(database.openDescription())")
         print("[pipeline] worker id: \(workerID)")
+        print("[pipeline] poll interval: \(String(format: \"%.2f\", pollInterval))s")
 
-        while true {
+        while !signalMonitor.shouldStop {
             let now = Date()
             if let job = try await jobs.claimNextRunnable(workerID: workerID, now: now) {
-                print("[pipeline] claimed job \(job.id) type=\(job.type.rawValue) attempt=\(job.attempt)")
+                idlePolls = 0
+                print("[pipeline] claimed job \(job.id) type=\(job.type.rawValue) attempt=\(job.attempt)/\(job.maxAttempts)")
                 try await workflows.markRunning(id: job.workflowID, startedAt: now)
                 do {
                     let resultJSON = try execute(job: job, now: now)
@@ -104,15 +115,28 @@ public struct PipelineRuntime {
                     print("[pipeline] job succeeded \(job.id)")
                 } catch {
                     let completedAt = Date()
-                    let message = error.localizedDescription
-                    try await jobs.markFailed(id: job.id, completedAt: completedAt, errorMessage: message)
-                    try await workflows.markFinished(id: job.workflowID, status: .failed, completedAt: completedAt, lastError: message)
-                    print("[pipeline] job failed \(job.id): \(message)")
+                    let message = Self.describe(error: error)
+                    let retryAt = nextRetryDate(for: job, from: completedAt)
+                    try await jobs.markFailed(id: job.id, completedAt: completedAt, errorMessage: message, retryAt: retryAt)
+
+                    if let retryAt {
+                        print("[pipeline] job failed \(job.id): \(message)")
+                        print("[pipeline] requeued job \(job.id) for retry at \(Self.timestamp(retryAt))")
+                    } else {
+                        try await workflows.markFinished(id: job.workflowID, status: .failed, completedAt: completedAt, lastError: message)
+                        print("[pipeline] job failed permanently \(job.id): \(message)")
+                    }
                 }
             } else {
-                try await Task.sleep(nanoseconds: 1_000_000_000)
+                idlePolls += 1
+                if idlePolls == 1 || idlePolls % Self.idleLogEveryPolls == 0 {
+                    print("[pipeline] idle; waiting for runnable jobs")
+                }
+                try await Self.sleep(seconds: pollInterval)
             }
         }
+
+        print("[pipeline] worker stopping")
     }
 
     private func execute(job: PipelineJob, now: Date) throws -> String {
@@ -161,10 +185,48 @@ public struct PipelineRuntime {
         return try JSONDecoder().decode(ChartIngestPayload.self, from: data)
     }
 
+    private func nextRetryDate(for job: PipelineJob, from completedAt: Date) -> Date? {
+        guard job.attempt < job.maxAttempts else { return nil }
+        let delaySeconds = min(pow(2.0, Double(max(job.attempt - 1, 0))), Self.maxRetryDelaySeconds)
+        return completedAt.addingTimeInterval(delaySeconds)
+    }
+
+    private static func sleep(seconds: TimeInterval) async throws {
+        let nanoseconds = UInt64(seconds * 1_000_000_000)
+        try await Task.sleep(nanoseconds: nanoseconds)
+    }
+
+    private static func describe(error: Error) -> String {
+        if let localized = error as? LocalizedError, let description = localized.errorDescription, !description.isEmpty {
+            return description
+        }
+        return String(describing: error)
+    }
+
+    private static func timestamp(_ date: Date) -> String {
+        workerTimestampFormatter.string(from: date)
+    }
+
     private static func defaultWorkerID() -> String {
         let host = ProcessInfo.processInfo.hostName
         return "\(host)-\(UUID().uuidString.prefix(8))"
     }
+
+    private static let workerPollInterval: TimeInterval = {
+        let rawValue = ProcessInfo.processInfo.environment["PIPELINE_WORKER_POLL_INTERVAL_SECONDS"]
+        if let rawValue, let seconds = TimeInterval(rawValue), seconds > 0 {
+            return seconds
+        }
+        return 1
+    }()
+
+    private static let maxRetryDelaySeconds: Double = 60
+    private static let idleLogEveryPolls = 30
+    private static let workerTimestampFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
 
     public static let helpText = """
     MasterOfDrums Pipeline
@@ -175,6 +237,9 @@ public struct PipelineRuntime {
       enqueue-chart-ingest --source-uri <uri> [--source-type midi] [--requested-by cli] [--idempotency-key <key>]
       list-jobs [--status queued|running|failed|succeeded|cancelled]
       show-job <job-id>
+
+    Worker environment:
+      PIPELINE_WORKER_POLL_INTERVAL_SECONDS  Seconds to wait between empty polls (default: 1)
     """
 }
 
@@ -244,5 +309,30 @@ public struct ChartIngestResult: Codable, Sendable {
         encoder.dateEncodingStrategy = .iso8601
         guard let data = try? encoder.encode(self) else { return "{}" }
         return String(decoding: data, as: UTF8.self)
+    }
+}
+
+private final class WorkerSignalMonitor: @unchecked Sendable {
+    private static let shared = WorkerSignalMonitor()
+
+    private let lock = NSLock()
+    private var stopRequested = false
+
+    var shouldStop: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return stopRequested
+    }
+
+    func requestStop() {
+        lock.lock()
+        stopRequested = true
+        lock.unlock()
+    }
+
+    static func install() -> WorkerSignalMonitor {
+        signal(SIGINT) { _ in shared.requestStop() }
+        signal(SIGTERM) { _ in shared.requestStop() }
+        return shared
     }
 }

@@ -286,12 +286,19 @@ public actor SQLiteJobStore: JobStore {
         }
     }
 
-    public func markFailed(id: String, completedAt: Date, errorMessage: String) async throws {
+    public func markFailed(id: String, completedAt: Date, errorMessage: String, retryAt: Date?) async throws {
         try database.withConnection { handle in
             let statement = try database.prepare(
                 """
                 UPDATE jobs
-                SET status = ?, completed_at = ?, updated_at = ?, last_error = ?
+                SET status = ?,
+                    completed_at = ?,
+                    updated_at = ?,
+                    last_error = ?,
+                    run_after = ?,
+                    claimed_at = NULL,
+                    claimed_by = NULL,
+                    started_at = CASE WHEN ? = ? THEN NULL ELSE started_at END
                 WHERE id = ?;
                 """,
                 on: handle
@@ -299,11 +306,15 @@ public actor SQLiteJobStore: JobStore {
             defer { sqlite3_finalize(statement) }
 
             let completedAtText = database.iso8601String(from: completedAt)
-            try database.bind(text: PipelineJobStatus.failed.rawValue, at: 1, in: statement, on: handle)
+            let nextStatus: PipelineJobStatus = retryAt == nil ? .failed : .queued
+            try database.bind(text: nextStatus.rawValue, at: 1, in: statement, on: handle)
             try database.bind(text: completedAtText, at: 2, in: statement, on: handle)
             try database.bind(text: completedAtText, at: 3, in: statement, on: handle)
             try database.bind(text: errorMessage, at: 4, in: statement, on: handle)
-            try database.bind(text: id, at: 5, in: statement, on: handle)
+            try database.bind(text: database.iso8601String(from: retryAt ?? completedAt), at: 5, in: statement, on: handle)
+            try database.bind(text: nextStatus.rawValue, at: 6, in: statement, on: handle)
+            try database.bind(text: PipelineJobStatus.queued.rawValue, at: 7, in: statement, on: handle)
+            try database.bind(text: id, at: 8, in: statement, on: handle)
             try database.stepExpectDone(statement, on: handle)
         }
     }
