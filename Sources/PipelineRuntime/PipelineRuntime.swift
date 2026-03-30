@@ -80,7 +80,8 @@ public struct PipelineRuntime {
                 print("type: \(job.type.rawValue)")
                 print("status: \(job.status.rawValue)")
                 print("payload: \(job.payloadJSON)")
-                print("result: \(job.resultJSON ?? \"<none>\")")
+                let resultDescription = job.resultJSON ?? "<none>"
+                print("result: \(resultDescription)")
             } else {
                 print("[pipeline] job not found: \(id)")
             }
@@ -99,7 +100,8 @@ public struct PipelineRuntime {
         print("[pipeline] worker starting")
         print("[pipeline] database: \(database.openDescription())")
         print("[pipeline] worker id: \(workerID)")
-        print("[pipeline] poll interval: \(String(format: \"%.2f\", pollInterval))s")
+        let pollIntervalDescription = String(format: "%.2f", pollInterval)
+        print("[pipeline] poll interval: \(pollIntervalDescription)s")
 
         while !signalMonitor.shouldStop {
             let now = Date()
