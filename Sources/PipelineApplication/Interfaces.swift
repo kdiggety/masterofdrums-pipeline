@@ -105,3 +105,63 @@ public struct AudioIngestPayload: Codable, Sendable {
         return String(decoding: data, as: UTF8.self)
     }
 }
+
+public struct EnqueueAudioAnalyzeRequest: Sendable {
+    public let workflowID: String
+    public let sourceURI: String
+    public let sourceType: String
+    public let requestedBy: String
+    public let maxAttempts: Int
+
+    public init(workflowID: String, sourceURI: String, sourceType: String, requestedBy: String, maxAttempts: Int = 5) {
+        self.workflowID = workflowID
+        self.sourceURI = sourceURI
+        self.sourceType = sourceType
+        self.requestedBy = requestedBy
+        self.maxAttempts = maxAttempts
+    }
+}
+
+public struct SubmitAudioAnalyzeJob {
+    public let jobs: JobStore
+
+    public init(jobs: JobStore) {
+        self.jobs = jobs
+    }
+
+    public func execute(_ request: EnqueueAudioAnalyzeRequest) async throws -> PipelineJob {
+        let payload = AudioAnalyzePayload(
+            sourceType: request.sourceType,
+            sourceURI: request.sourceURI,
+            requestedBy: request.requestedBy
+        )
+        let job = PipelineJob(
+            workflowID: request.workflowID,
+            type: .audioAnalyze,
+            status: .queued,
+            maxAttempts: request.maxAttempts,
+            payloadJSON: payload.toJSONString()
+        )
+        try await jobs.enqueue(job)
+        return job
+    }
+}
+
+public struct AudioAnalyzePayload: Codable, Sendable {
+    public let sourceType: String
+    public let sourceURI: String
+    public let requestedBy: String
+
+    public init(sourceType: String, sourceURI: String, requestedBy: String) {
+        self.sourceType = sourceType
+        self.sourceURI = sourceURI
+        self.requestedBy = requestedBy
+    }
+
+    public func toJSONString() -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(self) else { return "{}" }
+        return String(decoding: data, as: UTF8.self)
+    }
+}

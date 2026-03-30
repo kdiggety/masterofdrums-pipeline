@@ -252,7 +252,9 @@ public struct PipelineRuntime {
         switch job.type {
         case .audioIngest:
             return try await executeAudioIngest(job: job, now: now)
-        case .audioAnalyze, .chartGenerate, .chartValidate, .chartExport:
+        case .audioAnalyze:
+            return try await executeAudioAnalyze(job: job, now: now)
+        case .chartGenerate, .chartValidate, .chartExport:
             throw PipelineRuntimeError.unsupportedJobType(job.type.rawValue)
         }
     }
@@ -320,12 +322,115 @@ public struct PipelineRuntime {
             ],
             createdAt: now
         )
+
+        let analyzeJob = try await enqueueAudioAnalyzeFollowUp(for: job, payload: payload, createdAt: now)
+        try await appendEvent(
+            workflowID: job.workflowID,
+            jobID: job.id,
+            eventType: "audio_analyze_enqueued",
+            message: "Enqueued follow-up audio_analyze job \(analyzeJob.id)",
+            details: [
+                "next_job_id": AnySendable(analyzeJob.id),
+                "next_job_type": AnySendable(analyzeJob.type.rawValue)
+            ],
+            createdAt: now
+        )
         return metadata.toJSONString()
+    }
+
+    private func executeAudioAnalyze(job: PipelineJob, now: Date) async throws -> String {
+        let payload = try decodeAudioAnalyzePayload(from: job.payloadJSON)
+        let fileURL = try resolveLocalFileURL(from: payload.sourceURI)
+        let filePath = fileURL.path
+        let fileManager = FileManager.default
+
+        guard fileManager.fileExists(atPath: filePath) else {
+            throw PipelineRuntimeError.sourceNotFound(payload.sourceURI)
+        }
+
+        let asset = AVURLAsset(url: fileURL)
+        let duration = try await asset.load(.duration)
+        let durationSeconds = duration.seconds
+        let tracks = try await asset.loadTracks(withMediaType: .audio)
+
+        let segmentCount: Int
+        if durationSeconds.isFinite, durationSeconds > 0 {
+            segmentCount = max(1, Int(ceil(durationSeconds / 2.0)))
+        } else {
+            segmentCount = 0
+        }
+
+        let analysis = AudioAnalyzeResult(
+            sourceType: payload.sourceType,
+            sourceURI: payload.sourceURI,
+            requestedBy: payload.requestedBy,
+            analyzedAt: now,
+            durationSeconds: durationSeconds.isFinite ? durationSeconds : nil,
+            audioTrackCount: tracks.count,
+            estimatedSegmentCount: segmentCount,
+            note: "Placeholder audio analysis completed. Ready for chart-generation handoff."
+        )
+
+        let artifact = ArtifactRecord(
+            workflowID: job.workflowID,
+            jobID: job.id,
+            artifactType: "audio_analysis",
+            uri: fileURL.absoluteString,
+            contentType: "application/json",
+            checksum: nil,
+            metadataJSON: analysis.toJSONString(),
+            createdAt: now
+        )
+        try await artifacts.insert(artifact)
+        try await appendEvent(
+            workflowID: job.workflowID,
+            jobID: job.id,
+            eventType: "audio_analysis_completed",
+            message: "Audio analysis placeholder completed",
+            details: [
+                "estimated_segment_count": AnySendable(analysis.estimatedSegmentCount),
+                "audio_track_count": AnySendable(analysis.audioTrackCount),
+                "duration_seconds": AnySendable(analysis.durationSeconds ?? 0)
+            ],
+            createdAt: now
+        )
+        return analysis.toJSONString()
+    }
+
+    private func enqueueAudioAnalyzeFollowUp(for job: PipelineJob, payload: AudioIngestPayload, createdAt: Date) async throws -> PipelineJob {
+        let useCase = SubmitAudioAnalyzeJob(jobs: jobs)
+        let analyzeJob = try await useCase.execute(
+            EnqueueAudioAnalyzeRequest(
+                workflowID: job.workflowID,
+                sourceURI: payload.sourceURI,
+                sourceType: payload.sourceType,
+                requestedBy: payload.requestedBy
+            )
+        )
+        try await appendEvent(
+            workflowID: job.workflowID,
+            jobID: analyzeJob.id,
+            eventType: "job_enqueued",
+            message: "Audio analyze job enqueued",
+            details: [
+                "source_uri": AnySendable(payload.sourceURI),
+                "source_type": AnySendable(payload.sourceType),
+                "requested_by": AnySendable(payload.requestedBy),
+                "trigger_job_id": AnySendable(job.id)
+            ],
+            createdAt: createdAt
+        )
+        return analyzeJob
     }
 
     private func decodeAudioIngestPayload(from json: String) throws -> AudioIngestPayload {
         let data = Data(json.utf8)
         return try JSONDecoder().decode(AudioIngestPayload.self, from: data)
+    }
+
+    private func decodeAudioAnalyzePayload(from json: String) throws -> AudioAnalyzePayload {
+        let data = Data(json.utf8)
+        return try JSONDecoder().decode(AudioAnalyzePayload.self, from: data)
     }
 
     private func resolveLocalFileURL(from sourceURI: String) throws -> URL {
@@ -524,6 +629,25 @@ public struct AudioIngestResult: Codable, Sendable {
     public let channelCount: Int?
     public let modifiedAt: Date?
     public let ingestedAt: Date
+    public let note: String
+
+    public func toJSONString() -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(self) else { return "{}" }
+        return String(decoding: data, as: UTF8.self)
+    }
+}
+
+public struct AudioAnalyzeResult: Codable, Sendable {
+    public let sourceType: String
+    public let sourceURI: String
+    public let requestedBy: String
+    public let analyzedAt: Date
+    public let durationSeconds: Double?
+    public let audioTrackCount: Int
+    public let estimatedSegmentCount: Int
     public let note: String
 
     public func toJSONString() -> String {
