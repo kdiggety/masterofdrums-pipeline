@@ -81,6 +81,101 @@ public actor SQLiteWorkflowStore: WorkflowStore {
     }
 }
 
+public actor SQLiteWorkflowEventStore: WorkflowEventStore {
+    private let database: SQLiteDatabase
+
+    public init(database: SQLiteDatabase) {
+        self.database = database
+    }
+
+    public func append(_ event: PipelineWorkflowEvent) async throws {
+        try database.withConnection { handle in
+            let statement = try database.prepare(
+                """
+                INSERT INTO workflow_events (
+                    id, workflow_id, job_id, event_type, message, details_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?);
+                """,
+                on: handle
+            )
+            defer { sqlite3_finalize(statement) }
+
+            try database.bind(text: event.id, at: 1, in: statement, on: handle)
+            try database.bind(text: event.workflowID, at: 2, in: statement, on: handle)
+            try database.bind(text: event.jobID, at: 3, in: statement, on: handle)
+            try database.bind(text: event.eventType, at: 4, in: statement, on: handle)
+            try database.bind(text: event.message, at: 5, in: statement, on: handle)
+            try database.bind(text: event.detailsJSON, at: 6, in: statement, on: handle)
+            try database.bind(text: database.iso8601String(from: event.createdAt), at: 7, in: statement, on: handle)
+            try database.stepExpectDone(statement, on: handle)
+        }
+    }
+
+    public func list(workflowID: String?, jobID: String?, limit: Int) async throws -> [PipelineWorkflowEvent] {
+        try database.withConnection { handle in
+            var clauses: [String] = []
+            if workflowID != nil { clauses.append("workflow_id = ?") }
+            if jobID != nil { clauses.append("job_id = ?") }
+            let whereClause = clauses.isEmpty ? "" : "WHERE \(clauses.joined(separator: " AND "))"
+            let sql = """
+            SELECT id, workflow_id, job_id, event_type, message, details_json, created_at
+            FROM workflow_events
+            \(whereClause)
+            ORDER BY created_at DESC
+            LIMIT ?;
+            """
+
+            let statement = try database.prepare(sql, on: handle)
+            defer { sqlite3_finalize(statement) }
+
+            var bindIndex: Int32 = 1
+            if let workflowID {
+                try database.bind(text: workflowID, at: bindIndex, in: statement, on: handle)
+                bindIndex += 1
+            }
+            if let jobID {
+                try database.bind(text: jobID, at: bindIndex, in: statement, on: handle)
+                bindIndex += 1
+            }
+            try database.bind(int: max(1, limit), at: bindIndex, in: statement, on: handle)
+
+            var results: [PipelineWorkflowEvent] = []
+            while true {
+                let result = sqlite3_step(statement)
+                if result == SQLITE_ROW {
+                    results.append(decodeEvent(from: statement))
+                } else if result == SQLITE_DONE {
+                    break
+                } else {
+                    throw SQLiteDatabaseError.stepFailed(String(cString: sqlite3_errmsg(handle)))
+                }
+            }
+            return results
+        }
+    }
+
+    private func decodeEvent(from statement: OpaquePointer) -> PipelineWorkflowEvent {
+        PipelineWorkflowEvent(
+            id: string(at: 0, in: statement),
+            workflowID: string(at: 1, in: statement),
+            jobID: optionalString(at: 2, in: statement),
+            eventType: string(at: 3, in: statement),
+            message: optionalString(at: 4, in: statement),
+            detailsJSON: optionalString(at: 5, in: statement),
+            createdAt: database.date(from: optionalString(at: 6, in: statement)) ?? Date()
+        )
+    }
+
+    private func string(at index: Int32, in statement: OpaquePointer) -> String {
+        optionalString(at: index, in: statement) ?? ""
+    }
+
+    private func optionalString(at index: Int32, in statement: OpaquePointer) -> String? {
+        guard let pointer = sqlite3_column_text(statement, index) else { return nil }
+        return String(cString: pointer)
+    }
+}
+
 public actor SQLiteJobStore: JobStore {
     private let database: SQLiteDatabase
 

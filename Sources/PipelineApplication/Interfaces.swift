@@ -11,6 +11,11 @@ public protocol WorkflowStore: Sendable {
     func markFinished(id: String, status: PipelineWorkflowStatus, completedAt: Date, lastError: String?) async throws
 }
 
+public protocol WorkflowEventStore: Sendable {
+    func append(_ event: PipelineWorkflowEvent) async throws
+    func list(workflowID: String?, jobID: String?, limit: Int) async throws -> [PipelineWorkflowEvent]
+}
+
 public protocol JobStore: Sendable {
     func enqueue(_ job: PipelineJob) async throws
     func list(status: PipelineJobStatus?) async throws -> [PipelineJob]

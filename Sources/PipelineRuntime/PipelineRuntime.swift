@@ -10,10 +10,11 @@ import PipelineInfrastructure
 
 public enum PipelineCLICommand: Equatable {
     case initDB
-    case worker
+    case worker(stopAfterIdlePolls: Int?)
     case enqueueChartIngest(sourceURI: String, sourceType: String, requestedBy: String, idempotencyKey: String?)
     case listJobs(status: PipelineJobStatus?)
     case showJob(id: String)
+    case listEvents(workflowID: String?, jobID: String?, limit: Int)
     case help
 }
 
@@ -21,6 +22,7 @@ public struct PipelineRuntime {
     public let database: SQLiteDatabase
     public let migrator: DatabaseMigrator
     public let workflows: WorkflowStore
+    public let events: WorkflowEventStore
     public let jobs: JobStore
 
     public init(configuration: SQLiteConfiguration = .fromEnvironment()) {
@@ -28,6 +30,7 @@ public struct PipelineRuntime {
         self.database = database
         self.migrator = SQLiteMigrator(database: database)
         self.workflows = SQLiteWorkflowStore(database: database)
+        self.events = SQLiteWorkflowEventStore(database: database)
         self.jobs = SQLiteJobStore(database: database)
     }
 
@@ -37,11 +40,11 @@ public struct PipelineRuntime {
             try await migrator.applyMigrations()
             print("[pipeline] database initialized at \(database.openDescription())")
 
-        case .worker:
+        case .worker(let stopAfterIdlePolls):
             if database.configuration.autoMigrate {
                 try await migrator.applyMigrations()
             }
-            try await runWorkerLoop()
+            try await runWorkerLoop(stopAfterIdlePolls: stopAfterIdlePolls)
 
         case .enqueueChartIngest(let sourceURI, let sourceType, let requestedBy, let idempotencyKey):
             if database.configuration.autoMigrate {
@@ -55,6 +58,11 @@ public struct PipelineRuntime {
                     idempotencyKey: idempotencyKey
                 )
             )
+            try await appendEvent(workflowID: job.workflowID, jobID: job.id, eventType: "job_enqueued", message: "Chart ingest job enqueued", details: [
+                "source_uri": AnySendable(sourceURI),
+                "source_type": AnySendable(sourceType),
+                "requested_by": AnySendable(requestedBy)
+            ], createdAt: Date())
             print("[pipeline] enqueued chart-ingest job \(job.id) for \(sourceURI)")
 
         case .listJobs(let status):
@@ -86,34 +94,66 @@ public struct PipelineRuntime {
                 print("[pipeline] job not found: \(id)")
             }
 
+        case .listEvents(let workflowID, let jobID, let limit):
+            if database.configuration.autoMigrate {
+                try await migrator.applyMigrations()
+            }
+            let results = try await events.list(workflowID: workflowID, jobID: jobID, limit: limit)
+            if results.isEmpty {
+                print("[pipeline] no workflow events found")
+            } else {
+                for event in results {
+                    let jobLabel = event.jobID ?? "-"
+                    let message = event.message ?? ""
+                    print("\(Self.timestamp(event.createdAt)) workflow=\(event.workflowID) job=\(jobLabel) type=\(event.eventType) \(message)")
+                }
+            }
+
         case .help:
             print(Self.helpText)
         }
     }
 
-    private func runWorkerLoop() async throws {
+    private func runWorkerLoop(stopAfterIdlePolls: Int?) async throws {
         let workerID = Self.defaultWorkerID()
         let pollInterval = Self.workerPollInterval
         let signalMonitor = WorkerSignalMonitor.install()
         var idlePolls = 0
+        var processedJobs = 0
 
         print("[pipeline] worker starting")
         print("[pipeline] database: \(database.openDescription())")
         print("[pipeline] worker id: \(workerID)")
         let pollIntervalDescription = String(format: "%.2f", pollInterval)
         print("[pipeline] poll interval: \(pollIntervalDescription)s")
+        if let stopAfterIdlePolls {
+            print("[pipeline] stop-after-idle-polls: \(stopAfterIdlePolls)")
+        }
 
         while !signalMonitor.shouldStop {
             let now = Date()
             if let job = try await jobs.claimNextRunnable(workerID: workerID, now: now) {
+                processedJobs += 1
                 idlePolls = 0
+                let claimedMessage = "Claimed by \(workerID); attempt \(job.attempt)/\(job.maxAttempts)"
                 print("[pipeline] claimed job \(job.id) type=\(job.type.rawValue) attempt=\(job.attempt)/\(job.maxAttempts)")
                 try await workflows.markRunning(id: job.workflowID, startedAt: now)
+                try await appendEvent(workflowID: job.workflowID, jobID: job.id, eventType: "job_claimed", message: claimedMessage, details: [
+                    "worker_id": AnySendable(workerID),
+                    "attempt": AnySendable(job.attempt),
+                    "max_attempts": AnySendable(job.maxAttempts),
+                    "job_type": AnySendable(job.type.rawValue)
+                ], createdAt: now)
+
                 do {
                     let resultJSON = try execute(job: job, now: now)
                     let completedAt = Date()
                     try await jobs.markSucceeded(id: job.id, completedAt: completedAt, resultJSON: resultJSON)
                     try await workflows.markFinished(id: job.workflowID, status: .succeeded, completedAt: completedAt, lastError: nil)
+                    try await appendEvent(workflowID: job.workflowID, jobID: job.id, eventType: "job_succeeded", message: "Job completed successfully", details: [
+                        "worker_id": AnySendable(workerID),
+                        "result_json": AnySendable(resultJSON)
+                    ], createdAt: completedAt)
                     print("[pipeline] job succeeded \(job.id)")
                 } catch {
                     let completedAt = Date()
@@ -122,10 +162,21 @@ public struct PipelineRuntime {
                     try await jobs.markFailed(id: job.id, completedAt: completedAt, errorMessage: message, retryAt: retryAt)
 
                     if let retryAt {
+                        try await appendEvent(workflowID: job.workflowID, jobID: job.id, eventType: "job_requeued", message: message, details: [
+                            "worker_id": AnySendable(workerID),
+                            "retry_at": AnySendable(Self.timestamp(retryAt)),
+                            "attempt": AnySendable(job.attempt),
+                            "max_attempts": AnySendable(job.maxAttempts)
+                        ], createdAt: completedAt)
                         print("[pipeline] job failed \(job.id): \(message)")
                         print("[pipeline] requeued job \(job.id) for retry at \(Self.timestamp(retryAt))")
                     } else {
                         try await workflows.markFinished(id: job.workflowID, status: .failed, completedAt: completedAt, lastError: message)
+                        try await appendEvent(workflowID: job.workflowID, jobID: job.id, eventType: "job_failed", message: message, details: [
+                            "worker_id": AnySendable(workerID),
+                            "attempt": AnySendable(job.attempt),
+                            "max_attempts": AnySendable(job.maxAttempts)
+                        ], createdAt: completedAt)
                         print("[pipeline] job failed permanently \(job.id): \(message)")
                     }
                 }
@@ -133,6 +184,10 @@ public struct PipelineRuntime {
                 idlePolls += 1
                 if idlePolls == 1 || idlePolls % Self.idleLogEveryPolls == 0 {
                     print("[pipeline] idle; waiting for runnable jobs")
+                }
+                if let stopAfterIdlePolls, idlePolls >= stopAfterIdlePolls {
+                    print("[pipeline] stop-after-idle reached; processed \(processedJobs) job(s)")
+                    break
                 }
                 try await Self.sleep(seconds: pollInterval)
             }
@@ -187,6 +242,25 @@ public struct PipelineRuntime {
         return try JSONDecoder().decode(ChartIngestPayload.self, from: data)
     }
 
+    private func appendEvent(
+        workflowID: String,
+        jobID: String?,
+        eventType: String,
+        message: String?,
+        details: [String: AnySendable],
+        createdAt: Date
+    ) async throws {
+        let event = PipelineWorkflowEvent(
+            workflowID: workflowID,
+            jobID: jobID,
+            eventType: eventType,
+            message: message,
+            detailsJSON: Self.encodeJSONObject(details),
+            createdAt: createdAt
+        )
+        try await events.append(event)
+    }
+
     private func nextRetryDate(for job: PipelineJob, from completedAt: Date) -> Date? {
         guard job.attempt < job.maxAttempts else { return nil }
         let delaySeconds = min(pow(2.0, Double(max(job.attempt - 1, 0))), Self.maxRetryDelaySeconds)
@@ -203,6 +277,13 @@ public struct PipelineRuntime {
             return description
         }
         return String(describing: error)
+    }
+
+    private static func encodeJSONObject(_ values: [String: AnySendable]) -> String? {
+        let rawValues = values.mapValues(\.value)
+        guard JSONSerialization.isValidJSONObject(rawValues) else { return nil }
+        guard let data = try? JSONSerialization.data(withJSONObject: rawValues, options: [.sortedKeys]) else { return nil }
+        return String(decoding: data, as: UTF8.self)
     }
 
     private static func timestamp(_ date: Date) -> String {
@@ -235,10 +316,11 @@ public struct PipelineRuntime {
 
     Commands:
       init-db
-      worker
+      worker [--stop-after-idle-polls <count>]
       enqueue-chart-ingest --source-uri <uri> [--source-type midi] [--requested-by cli] [--idempotency-key <key>]
       list-jobs [--status queued|running|failed|succeeded|cancelled]
       show-job <job-id>
+      list-events [--workflow-id <workflow-id>] [--job-id <job-id>] [--limit <count>]
 
     Worker environment:
       PIPELINE_WORKER_POLL_INTERVAL_SECONDS  Seconds to wait between empty polls (default: 1)
@@ -255,7 +337,7 @@ public enum PipelineCLIParser {
         case "init-db":
             return .initDB
         case "worker":
-            return .worker
+            return .worker(stopAfterIdlePolls: intValue(for: "--stop-after-idle-polls", in: args))
         case "enqueue-chart-ingest":
             return .enqueueChartIngest(
                 sourceURI: value(for: "--source-uri", in: args) ?? "",
@@ -271,6 +353,12 @@ public enum PipelineCLIParser {
                 return .showJob(id: args[1])
             }
             return .help
+        case "list-events":
+            return .listEvents(
+                workflowID: value(for: "--workflow-id", in: args),
+                jobID: value(for: "--job-id", in: args),
+                limit: intValue(for: "--limit", in: args) ?? 50
+            )
         default:
             return .help
         }
@@ -279,6 +367,11 @@ public enum PipelineCLIParser {
     private static func value(for flag: String, in args: [String]) -> String? {
         guard let index = args.firstIndex(of: flag), index + 1 < args.count else { return nil }
         return args[index + 1]
+    }
+
+    private static func intValue(for flag: String, in args: [String]) -> Int? {
+        guard let rawValue = value(for: flag, in: args) else { return nil }
+        return Int(rawValue)
     }
 }
 
@@ -311,6 +404,14 @@ public struct ChartIngestResult: Codable, Sendable {
         encoder.dateEncodingStrategy = .iso8601
         guard let data = try? encoder.encode(self) else { return "{}" }
         return String(decoding: data, as: UTF8.self)
+    }
+}
+
+public struct AnySendable: @unchecked Sendable {
+    public let value: Any
+
+    public init(_ value: Any) {
+        self.value = value
     }
 }
 
