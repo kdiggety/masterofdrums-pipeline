@@ -7,12 +7,17 @@ public protocol DatabaseMigrator: Sendable {
 
 public protocol WorkflowStore: Sendable {
     func insert(_ workflow: PipelineWorkflow) async throws
+    func markRunning(id: String, startedAt: Date) async throws
+    func markFinished(id: String, status: PipelineWorkflowStatus, completedAt: Date, lastError: String?) async throws
 }
 
 public protocol JobStore: Sendable {
     func enqueue(_ job: PipelineJob) async throws
     func list(status: PipelineJobStatus?) async throws -> [PipelineJob]
     func find(id: String) async throws -> PipelineJob?
+    func claimNextRunnable(workerID: String, now: Date) async throws -> PipelineJob?
+    func markSucceeded(id: String, completedAt: Date, resultJSON: String) async throws
+    func markFailed(id: String, completedAt: Date, errorMessage: String) async throws
 }
 
 public struct EnqueueChartIngestRequest: Sendable {

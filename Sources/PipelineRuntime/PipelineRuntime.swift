@@ -36,9 +36,7 @@ public struct PipelineRuntime {
             if database.configuration.autoMigrate {
                 try await migrator.applyMigrations()
             }
-            print("[pipeline] worker starting")
-            print("[pipeline] database: \(database.openDescription())")
-            print("[pipeline] worker loop not yet implemented")
+            try await runWorkerLoop()
 
         case .enqueueChartIngest(let sourceURI, let sourceType, let requestedBy, let idempotencyKey):
             if database.configuration.autoMigrate {
@@ -77,7 +75,7 @@ public struct PipelineRuntime {
                 print("type: \(job.type.rawValue)")
                 print("status: \(job.status.rawValue)")
                 print("payload: \(job.payloadJSON)")
-                print("result: \(job.resultJSON ?? "<none>")")
+                print("result: \(job.resultJSON ?? \"<none>\")")
             } else {
                 print("[pipeline] job not found: \(id)")
             }
@@ -85,6 +83,87 @@ public struct PipelineRuntime {
         case .help:
             print(Self.helpText)
         }
+    }
+
+    private func runWorkerLoop() async throws {
+        let workerID = Self.defaultWorkerID()
+        print("[pipeline] worker starting")
+        print("[pipeline] database: \(database.openDescription())")
+        print("[pipeline] worker id: \(workerID)")
+
+        while true {
+            let now = Date()
+            if let job = try await jobs.claimNextRunnable(workerID: workerID, now: now) {
+                print("[pipeline] claimed job \(job.id) type=\(job.type.rawValue) attempt=\(job.attempt)")
+                try await workflows.markRunning(id: job.workflowID, startedAt: now)
+                do {
+                    let resultJSON = try execute(job: job, now: now)
+                    let completedAt = Date()
+                    try await jobs.markSucceeded(id: job.id, completedAt: completedAt, resultJSON: resultJSON)
+                    try await workflows.markFinished(id: job.workflowID, status: .succeeded, completedAt: completedAt, lastError: nil)
+                    print("[pipeline] job succeeded \(job.id)")
+                } catch {
+                    let completedAt = Date()
+                    let message = error.localizedDescription
+                    try await jobs.markFailed(id: job.id, completedAt: completedAt, errorMessage: message)
+                    try await workflows.markFinished(id: job.workflowID, status: .failed, completedAt: completedAt, lastError: message)
+                    print("[pipeline] job failed \(job.id): \(message)")
+                }
+            } else {
+                try await Task.sleep(nanoseconds: 1_000_000_000)
+            }
+        }
+    }
+
+    private func execute(job: PipelineJob, now: Date) throws -> String {
+        switch job.type {
+        case .chartIngest:
+            return try executeChartIngest(job: job, now: now)
+        case .chartValidate, .chartExport:
+            throw PipelineRuntimeError.unsupportedJobType(job.type.rawValue)
+        }
+    }
+
+    private func executeChartIngest(job: PipelineJob, now: Date) throws -> String {
+        let payload = try decodeChartIngestPayload(from: job.payloadJSON)
+        let sourceURL = URL(fileURLWithPath: payload.sourceURI)
+        let reachableURL: URL
+
+        if FileManager.default.fileExists(atPath: payload.sourceURI) {
+            reachableURL = URL(fileURLWithPath: payload.sourceURI)
+        } else if payload.sourceURI.hasPrefix("file://") {
+            reachableURL = URL(string: payload.sourceURI) ?? sourceURL
+        } else {
+            throw PipelineRuntimeError.sourceNotFound(payload.sourceURI)
+        }
+
+        let filePath = reachableURL.isFileURL ? reachableURL.path : payload.sourceURI
+        guard FileManager.default.fileExists(atPath: filePath) else {
+            throw PipelineRuntimeError.sourceNotFound(payload.sourceURI)
+        }
+
+        let attributes = try FileManager.default.attributesOfItem(atPath: filePath)
+        let fileSize = (attributes[.size] as? NSNumber)?.intValue ?? 0
+        let result = ChartIngestResult(
+            sourceType: payload.sourceType,
+            sourceURI: payload.sourceURI,
+            requestedBy: payload.requestedBy,
+            filePath: filePath,
+            fileSizeBytes: fileSize,
+            ingestedAt: now,
+            note: "Chart ingest placeholder completed. Parsing/export pipeline not wired yet."
+        )
+        return result.toJSONString()
+    }
+
+    private func decodeChartIngestPayload(from json: String) throws -> ChartIngestPayload {
+        let data = Data(json.utf8)
+        return try JSONDecoder().decode(ChartIngestPayload.self, from: data)
+    }
+
+    private static func defaultWorkerID() -> String {
+        let host = ProcessInfo.processInfo.hostName
+        return "\(host)-\(UUID().uuidString.prefix(8))"
     }
 
     public static let helpText = """
@@ -133,5 +212,37 @@ public enum PipelineCLIParser {
     private static func value(for flag: String, in args: [String]) -> String? {
         guard let index = args.firstIndex(of: flag), index + 1 < args.count else { return nil }
         return args[index + 1]
+    }
+}
+
+public enum PipelineRuntimeError: LocalizedError {
+    case sourceNotFound(String)
+    case unsupportedJobType(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .sourceNotFound(let sourceURI):
+            return "Source file not found: \(sourceURI)"
+        case .unsupportedJobType(let type):
+            return "Unsupported job type: \(type)"
+        }
+    }
+}
+
+public struct ChartIngestResult: Codable, Sendable {
+    public let sourceType: String
+    public let sourceURI: String
+    public let requestedBy: String
+    public let filePath: String
+    public let fileSizeBytes: Int
+    public let ingestedAt: Date
+    public let note: String
+
+    public func toJSONString() -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(self) else { return "{}" }
+        return String(decoding: data, as: UTF8.self)
     }
 }

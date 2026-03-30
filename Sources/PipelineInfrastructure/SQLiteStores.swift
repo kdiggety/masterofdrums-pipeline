@@ -36,6 +36,49 @@ public actor SQLiteWorkflowStore: WorkflowStore {
             try database.stepExpectDone(statement, on: handle)
         }
     }
+
+    public func markRunning(id: String, startedAt: Date) async throws {
+        try database.withConnection { handle in
+            let statement = try database.prepare(
+                """
+                UPDATE workflows
+                SET status = ?, started_at = COALESCE(started_at, ?), updated_at = ?, last_error = NULL
+                WHERE id = ?;
+                """,
+                on: handle
+            )
+            defer { sqlite3_finalize(statement) }
+
+            let startedAtText = database.iso8601String(from: startedAt)
+            try database.bind(text: PipelineWorkflowStatus.running.rawValue, at: 1, in: statement, on: handle)
+            try database.bind(text: startedAtText, at: 2, in: statement, on: handle)
+            try database.bind(text: startedAtText, at: 3, in: statement, on: handle)
+            try database.bind(text: id, at: 4, in: statement, on: handle)
+            try database.stepExpectDone(statement, on: handle)
+        }
+    }
+
+    public func markFinished(id: String, status: PipelineWorkflowStatus, completedAt: Date, lastError: String?) async throws {
+        try database.withConnection { handle in
+            let statement = try database.prepare(
+                """
+                UPDATE workflows
+                SET status = ?, completed_at = ?, updated_at = ?, last_error = ?
+                WHERE id = ?;
+                """,
+                on: handle
+            )
+            defer { sqlite3_finalize(statement) }
+
+            let completedAtText = database.iso8601String(from: completedAt)
+            try database.bind(text: status.rawValue, at: 1, in: statement, on: handle)
+            try database.bind(text: completedAtText, at: 2, in: statement, on: handle)
+            try database.bind(text: completedAtText, at: 3, in: statement, on: handle)
+            try database.bind(text: lastError, at: 4, in: statement, on: handle)
+            try database.bind(text: id, at: 5, in: statement, on: handle)
+            try database.stepExpectDone(statement, on: handle)
+        }
+    }
 }
 
 public actor SQLiteJobStore: JobStore {
@@ -148,6 +191,120 @@ public actor SQLiteJobStore: JobStore {
                 return nil
             }
             throw SQLiteDatabaseError.stepFailed(String(cString: sqlite3_errmsg(handle)))
+        }
+    }
+
+    public func claimNextRunnable(workerID: String, now: Date) async throws -> PipelineJob? {
+        try database.withConnection { handle in
+            try database.execute("BEGIN IMMEDIATE TRANSACTION;", on: handle)
+            do {
+                let select = try database.prepare(
+                    """
+                    SELECT id, workflow_id, type, status, attempt, max_attempts, priority,
+                           run_after, claimed_at, claimed_by, created_at, updated_at,
+                           started_at, completed_at, last_error, payload_json, result_json
+                    FROM jobs
+                    WHERE status = ? AND run_after <= ?
+                    ORDER BY priority ASC, created_at ASC
+                    LIMIT 1;
+                    """,
+                    on: handle
+                )
+                defer { sqlite3_finalize(select) }
+
+                let nowText = database.iso8601String(from: now)
+                try database.bind(text: PipelineJobStatus.queued.rawValue, at: 1, in: select, on: handle)
+                try database.bind(text: nowText, at: 2, in: select, on: handle)
+
+                guard sqlite3_step(select) == SQLITE_ROW else {
+                    try database.execute("COMMIT;", on: handle)
+                    return nil
+                }
+
+                var job = try decodeJob(from: select)
+
+                let update = try database.prepare(
+                    """
+                    UPDATE jobs
+                    SET status = ?,
+                        attempt = attempt + 1,
+                        claimed_at = ?,
+                        claimed_by = ?,
+                        started_at = COALESCE(started_at, ?),
+                        updated_at = ?,
+                        last_error = NULL
+                    WHERE id = ?;
+                    """,
+                    on: handle
+                )
+                defer { sqlite3_finalize(update) }
+
+                try database.bind(text: PipelineJobStatus.running.rawValue, at: 1, in: update, on: handle)
+                try database.bind(text: nowText, at: 2, in: update, on: handle)
+                try database.bind(text: workerID, at: 3, in: update, on: handle)
+                try database.bind(text: nowText, at: 4, in: update, on: handle)
+                try database.bind(text: nowText, at: 5, in: update, on: handle)
+                try database.bind(text: job.id, at: 6, in: update, on: handle)
+                try database.stepExpectDone(update, on: handle)
+
+                try database.execute("COMMIT;", on: handle)
+
+                job.status = .running
+                job.attempt += 1
+                job.claimedAt = now
+                job.claimedBy = workerID
+                job.startedAt = job.startedAt ?? now
+                job.updatedAt = now
+                job.lastError = nil
+                return job
+            } catch {
+                try? database.execute("ROLLBACK;", on: handle)
+                throw error
+            }
+        }
+    }
+
+    public func markSucceeded(id: String, completedAt: Date, resultJSON: String) async throws {
+        try database.withConnection { handle in
+            let statement = try database.prepare(
+                """
+                UPDATE jobs
+                SET status = ?, completed_at = ?, updated_at = ?, result_json = ?, last_error = NULL
+                WHERE id = ?;
+                """,
+                on: handle
+            )
+            defer { sqlite3_finalize(statement) }
+
+            let completedAtText = database.iso8601String(from: completedAt)
+            try database.bind(text: PipelineJobStatus.succeeded.rawValue, at: 1, in: statement, on: handle)
+            try database.bind(text: completedAtText, at: 2, in: statement, on: handle)
+            try database.bind(text: completedAtText, at: 3, in: statement, on: handle)
+            try database.bind(text: resultJSON, at: 4, in: statement, on: handle)
+            try database.bind(text: id, at: 5, in: statement, on: handle)
+            try database.stepExpectDone(statement, on: handle)
+        }
+    }
+
+    public func markFailed(id: String, completedAt: Date, errorMessage: String) async throws {
+        try database.withConnection { handle in
+            let statement = try database.prepare(
+                """
+                UPDATE jobs
+                SET status = ?, completed_at = ?, updated_at = ?, last_error = ?
+                WHERE id = ?;
+                """,
+                on: handle
+            )
+            defer { sqlite3_finalize(statement) }
+
+            let completedAtText = database.iso8601String(from: completedAt)
+            try database.bind(text: PipelineJobStatus.failed.rawValue, at: 1, in: statement, on: handle)
+            try database.bind(text: completedAtText, at: 2, in: statement, on: handle)
+            try database.bind(text: completedAtText, at: 3, in: statement, on: handle)
+            try database.bind(text: errorMessage, at: 4, in: statement, on: handle)
+            try database.bind(text: id, at: 5, in: statement, on: handle)
+            try database.stepExpectDone(statement, on: handle)
         }
     }
 
