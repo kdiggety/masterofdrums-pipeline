@@ -315,7 +315,7 @@ public struct ChartIngestResult: Codable, Sendable {
 }
 
 private final class WorkerSignalMonitor: @unchecked Sendable {
-    private static let shared = WorkerSignalMonitor()
+    static let shared = WorkerSignalMonitor()
 
     private let lock = NSLock()
     private var stopRequested = false
@@ -333,8 +333,13 @@ private final class WorkerSignalMonitor: @unchecked Sendable {
     }
 
     static func install() -> WorkerSignalMonitor {
-        signal(SIGINT) { _ in shared.requestStop() }
-        signal(SIGTERM) { _ in shared.requestStop() }
+        signal(SIGINT, pipelineSignalHandler)
+        signal(SIGTERM, pipelineSignalHandler)
         return shared
     }
+}
+
+private func pipelineSignalHandler(_ signal: Int32) -> Void {
+    _ = signal
+    WorkerSignalMonitor.shared.requestStop()
 }
