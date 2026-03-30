@@ -16,6 +16,11 @@ public protocol WorkflowEventStore: Sendable {
     func list(workflowID: String?, jobID: String?, limit: Int) async throws -> [PipelineWorkflowEvent]
 }
 
+public protocol ArtifactStore: Sendable {
+    func insert(_ artifact: ArtifactRecord) async throws
+    func list(workflowID: String?, jobID: String?, limit: Int) async throws -> [ArtifactRecord]
+}
+
 public protocol JobStore: Sendable {
     func enqueue(_ job: PipelineJob) async throws
     func list(status: PipelineJobStatus?) async throws -> [PipelineJob]
@@ -25,14 +30,14 @@ public protocol JobStore: Sendable {
     func markFailed(id: String, completedAt: Date, errorMessage: String, retryAt: Date?) async throws
 }
 
-public struct EnqueueChartIngestRequest: Sendable {
-    public let source: ChartAssetReference
+public struct EnqueueAudioIngestRequest: Sendable {
+    public let source: AudioAssetReference
     public let requestedBy: String
     public let idempotencyKey: String?
     public let maxAttempts: Int
 
     public init(
-        source: ChartAssetReference,
+        source: AudioAssetReference,
         requestedBy: String = "cli",
         idempotencyKey: String? = nil,
         maxAttempts: Int = 5
@@ -44,7 +49,7 @@ public struct EnqueueChartIngestRequest: Sendable {
     }
 }
 
-public struct SubmitChartIngestJob {
+public struct SubmitAudioIngestJob {
     public let workflows: WorkflowStore
     public let jobs: JobStore
 
@@ -53,16 +58,16 @@ public struct SubmitChartIngestJob {
         self.jobs = jobs
     }
 
-    public func execute(_ request: EnqueueChartIngestRequest) async throws -> PipelineJob {
+    public func execute(_ request: EnqueueAudioIngestRequest) async throws -> PipelineJob {
         let workflow = PipelineWorkflow(
-            name: "chart-ingest",
+            name: "audio-ingest",
             status: .queued,
             requestedBy: request.requestedBy,
             idempotencyKey: request.idempotencyKey
         )
         try await workflows.insert(workflow)
 
-        let payload = ChartIngestPayload(
+        let payload = AudioIngestPayload(
             sourceType: request.source.sourceType,
             sourceURI: request.source.sourceURI,
             requestedBy: request.requestedBy,
@@ -70,7 +75,7 @@ public struct SubmitChartIngestJob {
         )
         let job = PipelineJob(
             workflowID: workflow.id,
-            type: .chartIngest,
+            type: .audioIngest,
             status: .queued,
             maxAttempts: request.maxAttempts,
             payloadJSON: payload.toJSONString()
@@ -80,7 +85,7 @@ public struct SubmitChartIngestJob {
     }
 }
 
-public struct ChartIngestPayload: Codable, Sendable {
+public struct AudioIngestPayload: Codable, Sendable {
     public let sourceType: String
     public let sourceURI: String
     public let requestedBy: String

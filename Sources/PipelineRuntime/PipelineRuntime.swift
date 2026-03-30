@@ -1,4 +1,5 @@
 import Foundation
+import AVFoundation
 #if canImport(Glibc)
 import Glibc
 #elseif canImport(Darwin)
@@ -11,10 +12,11 @@ import PipelineInfrastructure
 public enum PipelineCLICommand: Equatable {
     case initDB
     case worker(stopAfterIdlePolls: Int?)
-    case enqueueChartIngest(sourceURI: String, sourceType: String, requestedBy: String, idempotencyKey: String?)
+    case enqueueAudioIngest(sourceURI: String, sourceType: String, requestedBy: String, idempotencyKey: String?)
     case listJobs(status: PipelineJobStatus?)
     case showJob(id: String)
     case listEvents(workflowID: String?, jobID: String?, limit: Int)
+    case listArtifacts(workflowID: String?, jobID: String?, limit: Int)
     case help
 }
 
@@ -23,6 +25,7 @@ public struct PipelineRuntime {
     public let migrator: DatabaseMigrator
     public let workflows: WorkflowStore
     public let events: WorkflowEventStore
+    public let artifacts: ArtifactStore
     public let jobs: JobStore
 
     public init(configuration: SQLiteConfiguration = .fromEnvironment()) {
@@ -31,6 +34,7 @@ public struct PipelineRuntime {
         self.migrator = SQLiteMigrator(database: database)
         self.workflows = SQLiteWorkflowStore(database: database)
         self.events = SQLiteWorkflowEventStore(database: database)
+        self.artifacts = SQLiteArtifactStore(database: database)
         self.jobs = SQLiteJobStore(database: database)
     }
 
@@ -46,24 +50,31 @@ public struct PipelineRuntime {
             }
             try await runWorkerLoop(stopAfterIdlePolls: stopAfterIdlePolls)
 
-        case .enqueueChartIngest(let sourceURI, let sourceType, let requestedBy, let idempotencyKey):
+        case .enqueueAudioIngest(let sourceURI, let sourceType, let requestedBy, let idempotencyKey):
             if database.configuration.autoMigrate {
                 try await migrator.applyMigrations()
             }
-            let useCase = SubmitChartIngestJob(workflows: workflows, jobs: jobs)
+            let useCase = SubmitAudioIngestJob(workflows: workflows, jobs: jobs)
             let job = try await useCase.execute(
-                EnqueueChartIngestRequest(
-                    source: ChartAssetReference(sourceType: sourceType, sourceURI: sourceURI),
+                EnqueueAudioIngestRequest(
+                    source: AudioAssetReference(sourceType: sourceType, sourceURI: sourceURI),
                     requestedBy: requestedBy,
                     idempotencyKey: idempotencyKey
                 )
             )
-            try await appendEvent(workflowID: job.workflowID, jobID: job.id, eventType: "job_enqueued", message: "Chart ingest job enqueued", details: [
-                "source_uri": AnySendable(sourceURI),
-                "source_type": AnySendable(sourceType),
-                "requested_by": AnySendable(requestedBy)
-            ], createdAt: Date())
-            print("[pipeline] enqueued chart-ingest job \(job.id) for \(sourceURI)")
+            try await appendEvent(
+                workflowID: job.workflowID,
+                jobID: job.id,
+                eventType: "job_enqueued",
+                message: "Audio ingest job enqueued",
+                details: [
+                    "source_uri": AnySendable(sourceURI),
+                    "source_type": AnySendable(sourceType),
+                    "requested_by": AnySendable(requestedBy)
+                ],
+                createdAt: Date()
+            )
+            print("[pipeline] enqueued audio-ingest job \(job.id) for \(sourceURI)")
 
         case .listJobs(let status):
             if database.configuration.autoMigrate {
@@ -104,8 +115,22 @@ public struct PipelineRuntime {
             } else {
                 for event in results {
                     let jobLabel = event.jobID ?? "-"
-                    let message = event.message ?? ""
-                    print("\(Self.timestamp(event.createdAt)) workflow=\(event.workflowID) job=\(jobLabel) type=\(event.eventType) \(message)")
+                    print("\(Self.timestamp(event.createdAt)) workflow=\(event.workflowID) job=\(jobLabel) type=\(event.eventType) \(event.message ?? "")")
+                }
+            }
+
+        case .listArtifacts(let workflowID, let jobID, let limit):
+            if database.configuration.autoMigrate {
+                try await migrator.applyMigrations()
+            }
+            let results = try await artifacts.list(workflowID: workflowID, jobID: jobID, limit: limit)
+            if results.isEmpty {
+                print("[pipeline] no artifacts found")
+            } else {
+                for artifact in results {
+                    let workflowLabel = artifact.workflowID ?? "-"
+                    let jobLabel = artifact.jobID ?? "-"
+                    print("\(Self.timestamp(artifact.createdAt)) workflow=\(workflowLabel) job=\(jobLabel) type=\(artifact.artifactType) uri=\(artifact.uri)")
                 }
             }
 
@@ -135,25 +160,38 @@ public struct PipelineRuntime {
             if let job = try await jobs.claimNextRunnable(workerID: workerID, now: now) {
                 processedJobs += 1
                 idlePolls = 0
-                let claimedMessage = "Claimed by \(workerID); attempt \(job.attempt)/\(job.maxAttempts)"
                 print("[pipeline] claimed job \(job.id) type=\(job.type.rawValue) attempt=\(job.attempt)/\(job.maxAttempts)")
                 try await workflows.markRunning(id: job.workflowID, startedAt: now)
-                try await appendEvent(workflowID: job.workflowID, jobID: job.id, eventType: "job_claimed", message: claimedMessage, details: [
-                    "worker_id": AnySendable(workerID),
-                    "attempt": AnySendable(job.attempt),
-                    "max_attempts": AnySendable(job.maxAttempts),
-                    "job_type": AnySendable(job.type.rawValue)
-                ], createdAt: now)
+                try await appendEvent(
+                    workflowID: job.workflowID,
+                    jobID: job.id,
+                    eventType: "job_claimed",
+                    message: "Claimed by \(workerID); attempt \(job.attempt)/\(job.maxAttempts)",
+                    details: [
+                        "worker_id": AnySendable(workerID),
+                        "attempt": AnySendable(job.attempt),
+                        "max_attempts": AnySendable(job.maxAttempts),
+                        "job_type": AnySendable(job.type.rawValue)
+                    ],
+                    createdAt: now
+                )
 
                 do {
-                    let resultJSON = try execute(job: job, now: now)
+                    let resultJSON = try await execute(job: job, now: now)
                     let completedAt = Date()
                     try await jobs.markSucceeded(id: job.id, completedAt: completedAt, resultJSON: resultJSON)
                     try await workflows.markFinished(id: job.workflowID, status: .succeeded, completedAt: completedAt, lastError: nil)
-                    try await appendEvent(workflowID: job.workflowID, jobID: job.id, eventType: "job_succeeded", message: "Job completed successfully", details: [
-                        "worker_id": AnySendable(workerID),
-                        "result_json": AnySendable(resultJSON)
-                    ], createdAt: completedAt)
+                    try await appendEvent(
+                        workflowID: job.workflowID,
+                        jobID: job.id,
+                        eventType: "job_succeeded",
+                        message: "Job completed successfully",
+                        details: [
+                            "worker_id": AnySendable(workerID),
+                            "result_json": AnySendable(resultJSON)
+                        ],
+                        createdAt: completedAt
+                    )
                     print("[pipeline] job succeeded \(job.id)")
                 } catch {
                     let completedAt = Date()
@@ -162,21 +200,35 @@ public struct PipelineRuntime {
                     try await jobs.markFailed(id: job.id, completedAt: completedAt, errorMessage: message, retryAt: retryAt)
 
                     if let retryAt {
-                        try await appendEvent(workflowID: job.workflowID, jobID: job.id, eventType: "job_requeued", message: message, details: [
-                            "worker_id": AnySendable(workerID),
-                            "retry_at": AnySendable(Self.timestamp(retryAt)),
-                            "attempt": AnySendable(job.attempt),
-                            "max_attempts": AnySendable(job.maxAttempts)
-                        ], createdAt: completedAt)
+                        try await appendEvent(
+                            workflowID: job.workflowID,
+                            jobID: job.id,
+                            eventType: "job_requeued",
+                            message: message,
+                            details: [
+                                "worker_id": AnySendable(workerID),
+                                "retry_at": AnySendable(Self.timestamp(retryAt)),
+                                "attempt": AnySendable(job.attempt),
+                                "max_attempts": AnySendable(job.maxAttempts)
+                            ],
+                            createdAt: completedAt
+                        )
                         print("[pipeline] job failed \(job.id): \(message)")
                         print("[pipeline] requeued job \(job.id) for retry at \(Self.timestamp(retryAt))")
                     } else {
                         try await workflows.markFinished(id: job.workflowID, status: .failed, completedAt: completedAt, lastError: message)
-                        try await appendEvent(workflowID: job.workflowID, jobID: job.id, eventType: "job_failed", message: message, details: [
-                            "worker_id": AnySendable(workerID),
-                            "attempt": AnySendable(job.attempt),
-                            "max_attempts": AnySendable(job.maxAttempts)
-                        ], createdAt: completedAt)
+                        try await appendEvent(
+                            workflowID: job.workflowID,
+                            jobID: job.id,
+                            eventType: "job_failed",
+                            message: message,
+                            details: [
+                                "worker_id": AnySendable(workerID),
+                                "attempt": AnySendable(job.attempt),
+                                "max_attempts": AnySendable(job.maxAttempts)
+                            ],
+                            createdAt: completedAt
+                        )
                         print("[pipeline] job failed permanently \(job.id): \(message)")
                     }
                 }
@@ -196,60 +248,94 @@ public struct PipelineRuntime {
         print("[pipeline] worker stopping")
     }
 
-    private func execute(job: PipelineJob, now: Date) throws -> String {
+    private func execute(job: PipelineJob, now: Date) async throws -> String {
         switch job.type {
-        case .chartIngest:
-            return try executeChartIngest(job: job, now: now)
-        case .chartValidate, .chartExport:
+        case .audioIngest:
+            return try await executeAudioIngest(job: job, now: now)
+        case .audioAnalyze, .chartGenerate, .chartValidate, .chartExport:
             throw PipelineRuntimeError.unsupportedJobType(job.type.rawValue)
         }
     }
 
-    private func executeChartIngest(job: PipelineJob, now: Date) throws -> String {
-        let payload = try decodeChartIngestPayload(from: job.payloadJSON)
-        let sourceURL = URL(fileURLWithPath: payload.sourceURI)
-        let reachableURL: URL
+    private func executeAudioIngest(job: PipelineJob, now: Date) async throws -> String {
+        let payload = try decodeAudioIngestPayload(from: job.payloadJSON)
+        let fileURL = try resolveLocalFileURL(from: payload.sourceURI)
+        let filePath = fileURL.path
+        let fileManager = FileManager.default
 
-        if FileManager.default.fileExists(atPath: payload.sourceURI) {
-            reachableURL = URL(fileURLWithPath: payload.sourceURI)
-        } else if payload.sourceURI.hasPrefix("file://") {
-            reachableURL = URL(string: payload.sourceURI) ?? sourceURL
-        } else {
+        guard fileManager.fileExists(atPath: filePath) else {
             throw PipelineRuntimeError.sourceNotFound(payload.sourceURI)
         }
 
-        let filePath = reachableURL.isFileURL ? reachableURL.path : payload.sourceURI
-        guard FileManager.default.fileExists(atPath: filePath) else {
-            throw PipelineRuntimeError.sourceNotFound(payload.sourceURI)
-        }
-
-        let attributes = try FileManager.default.attributesOfItem(atPath: filePath)
+        let attributes = try fileManager.attributesOfItem(atPath: filePath)
         let fileSize = (attributes[.size] as? NSNumber)?.intValue ?? 0
-        let result = ChartIngestResult(
+        let modifiedAt = attributes[.modificationDate] as? Date
+        let contentType = Self.contentType(for: fileURL)
+
+        let asset = AVURLAsset(url: fileURL)
+        let duration = try await asset.load(.duration)
+        let durationSeconds = duration.seconds
+        let tracks = try await asset.loadTracks(withMediaType: .audio)
+        let firstTrack = tracks.first
+        let formatDescriptions = try await firstTrack?.load(.formatDescriptions)
+
+        let metadata = AudioIngestResult(
             sourceType: payload.sourceType,
             sourceURI: payload.sourceURI,
             requestedBy: payload.requestedBy,
             filePath: filePath,
             fileSizeBytes: fileSize,
+            contentType: contentType,
+            durationSeconds: durationSeconds.isFinite ? durationSeconds : nil,
+            audioTrackCount: tracks.count,
+            sampleRate: Self.sampleRate(from: formatDescriptions),
+            channelCount: Self.channelCount(from: formatDescriptions),
+            modifiedAt: modifiedAt,
             ingestedAt: now,
-            note: "Chart ingest placeholder completed. Parsing/export pipeline not wired yet."
+            note: "Audio source verified and metadata extracted."
         )
-        return result.toJSONString()
+
+        let artifact = ArtifactRecord(
+            workflowID: job.workflowID,
+            jobID: job.id,
+            artifactType: "source_audio",
+            uri: fileURL.absoluteString,
+            contentType: contentType,
+            checksum: nil,
+            metadataJSON: metadata.toJSONString(),
+            createdAt: now
+        )
+        try await artifacts.insert(artifact)
+        try await appendEvent(
+            workflowID: job.workflowID,
+            jobID: job.id,
+            eventType: "audio_metadata_extracted",
+            message: "Audio metadata extracted",
+            details: [
+                "content_type": AnySendable(contentType ?? "unknown"),
+                "duration_seconds": AnySendable(metadata.durationSeconds ?? 0),
+                "audio_track_count": AnySendable(metadata.audioTrackCount),
+                "sample_rate": AnySendable(metadata.sampleRate ?? 0),
+                "channel_count": AnySendable(metadata.channelCount ?? 0)
+            ],
+            createdAt: now
+        )
+        return metadata.toJSONString()
     }
 
-    private func decodeChartIngestPayload(from json: String) throws -> ChartIngestPayload {
+    private func decodeAudioIngestPayload(from json: String) throws -> AudioIngestPayload {
         let data = Data(json.utf8)
-        return try JSONDecoder().decode(ChartIngestPayload.self, from: data)
+        return try JSONDecoder().decode(AudioIngestPayload.self, from: data)
     }
 
-    private func appendEvent(
-        workflowID: String,
-        jobID: String?,
-        eventType: String,
-        message: String?,
-        details: [String: AnySendable],
-        createdAt: Date
-    ) async throws {
+    private func resolveLocalFileURL(from sourceURI: String) throws -> URL {
+        if sourceURI.hasPrefix("file://"), let url = URL(string: sourceURI), url.isFileURL {
+            return url
+        }
+        return URL(fileURLWithPath: sourceURI)
+    }
+
+    private func appendEvent(workflowID: String, jobID: String?, eventType: String, message: String?, details: [String: AnySendable], createdAt: Date) async throws {
         let event = PipelineWorkflowEvent(
             workflowID: workflowID,
             jobID: jobID,
@@ -268,8 +354,7 @@ public struct PipelineRuntime {
     }
 
     private static func sleep(seconds: TimeInterval) async throws {
-        let nanoseconds = UInt64(seconds * 1_000_000_000)
-        try await Task.sleep(nanoseconds: nanoseconds)
+        try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
     }
 
     private static func describe(error: Error) -> String {
@@ -284,6 +369,42 @@ public struct PipelineRuntime {
         guard JSONSerialization.isValidJSONObject(rawValues) else { return nil }
         guard let data = try? JSONSerialization.data(withJSONObject: rawValues, options: [.sortedKeys]) else { return nil }
         return String(decoding: data, as: UTF8.self)
+    }
+
+    private static func sampleRate(from formatDescriptions: [Any]?) -> Double? {
+        guard let descriptions = formatDescriptions else { return nil }
+        for description in descriptions {
+            guard let description = description as? CMFormatDescription else { continue }
+            if let stream = CMAudioFormatDescriptionGetStreamBasicDescription(description)?.pointee {
+                return stream.mSampleRate
+            }
+        }
+        return nil
+    }
+
+    private static func channelCount(from formatDescriptions: [Any]?) -> Int? {
+        guard let descriptions = formatDescriptions else { return nil }
+        for description in descriptions {
+            guard let description = description as? CMFormatDescription else { continue }
+            if let stream = CMAudioFormatDescriptionGetStreamBasicDescription(description)?.pointee {
+                return Int(stream.mChannelsPerFrame)
+            }
+        }
+        return nil
+    }
+
+    private static func contentType(for url: URL) -> String? {
+        let ext = url.pathExtension.lowercased()
+        switch ext {
+        case "wav": return "audio/wav"
+        case "mp3": return "audio/mpeg"
+        case "m4a": return "audio/mp4"
+        case "aac": return "audio/aac"
+        case "aiff", "aif": return "audio/aiff"
+        case "caf": return "audio/x-caf"
+        case "flac": return "audio/flac"
+        default: return nil
+        }
     }
 
     private static func timestamp(_ date: Date) -> String {
@@ -317,10 +438,11 @@ public struct PipelineRuntime {
     Commands:
       init-db
       worker [--stop-after-idle-polls <count>]
-      enqueue-chart-ingest --source-uri <uri> [--source-type midi] [--requested-by cli] [--idempotency-key <key>]
+      enqueue-audio-ingest --source-uri <uri> [--source-type file] [--requested-by cli] [--idempotency-key <key>]
       list-jobs [--status queued|running|failed|succeeded|cancelled]
       show-job <job-id>
       list-events [--workflow-id <workflow-id>] [--job-id <job-id>] [--limit <count>]
+      list-artifacts [--workflow-id <workflow-id>] [--job-id <job-id>] [--limit <count>]
 
     Worker environment:
       PIPELINE_WORKER_POLL_INTERVAL_SECONDS  Seconds to wait between empty polls (default: 1)
@@ -338,23 +460,25 @@ public enum PipelineCLIParser {
             return .initDB
         case "worker":
             return .worker(stopAfterIdlePolls: intValue(for: "--stop-after-idle-polls", in: args))
-        case "enqueue-chart-ingest":
-            return .enqueueChartIngest(
+        case "enqueue-audio-ingest", "enqueue-chart-ingest":
+            return .enqueueAudioIngest(
                 sourceURI: value(for: "--source-uri", in: args) ?? "",
-                sourceType: value(for: "--source-type", in: args) ?? "midi",
+                sourceType: value(for: "--source-type", in: args) ?? "file",
                 requestedBy: value(for: "--requested-by", in: args) ?? "cli",
                 idempotencyKey: value(for: "--idempotency-key", in: args)
             )
         case "list-jobs":
-            let rawStatus = value(for: "--status", in: args)
-            return .listJobs(status: rawStatus.flatMap(PipelineJobStatus.init(rawValue:)))
+            return .listJobs(status: value(for: "--status", in: args).flatMap(PipelineJobStatus.init(rawValue:)))
         case "show-job":
-            if args.count >= 2 {
-                return .showJob(id: args[1])
-            }
-            return .help
+            return args.count >= 2 ? .showJob(id: args[1]) : .help
         case "list-events":
             return .listEvents(
+                workflowID: value(for: "--workflow-id", in: args),
+                jobID: value(for: "--job-id", in: args),
+                limit: intValue(for: "--limit", in: args) ?? 50
+            )
+        case "list-artifacts":
+            return .listArtifacts(
                 workflowID: value(for: "--workflow-id", in: args),
                 jobID: value(for: "--job-id", in: args),
                 limit: intValue(for: "--limit", in: args) ?? 50
@@ -389,12 +513,18 @@ public enum PipelineRuntimeError: LocalizedError {
     }
 }
 
-public struct ChartIngestResult: Codable, Sendable {
+public struct AudioIngestResult: Codable, Sendable {
     public let sourceType: String
     public let sourceURI: String
     public let requestedBy: String
     public let filePath: String
     public let fileSizeBytes: Int
+    public let contentType: String?
+    public let durationSeconds: Double?
+    public let audioTrackCount: Int
+    public let sampleRate: Double?
+    public let channelCount: Int?
+    public let modifiedAt: Date?
     public let ingestedAt: Date
     public let note: String
 
@@ -409,28 +539,21 @@ public struct ChartIngestResult: Codable, Sendable {
 
 public struct AnySendable: @unchecked Sendable {
     public let value: Any
-
-    public init(_ value: Any) {
-        self.value = value
-    }
+    public init(_ value: Any) { self.value = value }
 }
 
 private final class WorkerSignalMonitor: @unchecked Sendable {
     static let shared = WorkerSignalMonitor()
-
     private let lock = NSLock()
     private var stopRequested = false
 
     var shouldStop: Bool {
-        lock.lock()
-        defer { lock.unlock() }
+        lock.lock(); defer { lock.unlock() }
         return stopRequested
     }
 
     func requestStop() {
-        lock.lock()
-        stopRequested = true
-        lock.unlock()
+        lock.lock(); stopRequested = true; lock.unlock()
     }
 
     static func install() -> WorkerSignalMonitor {

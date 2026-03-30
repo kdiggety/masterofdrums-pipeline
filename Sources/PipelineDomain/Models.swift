@@ -1,7 +1,9 @@
 import Foundation
 
 public enum PipelineJobType: String, Codable, Sendable {
-    case chartIngest = "chart_ingest"
+    case audioIngest = "audio_ingest"
+    case audioAnalyze = "audio_analyze"
+    case chartGenerate = "chart_generate"
     case chartValidate = "chart_validate"
     case chartExport = "chart_export"
 }
@@ -179,7 +181,7 @@ public struct ArtifactRecord: Codable, Identifiable, Sendable {
     }
 }
 
-public struct ChartAssetReference: Codable, Sendable {
+public struct AudioAssetReference: Codable, Sendable {
     public let sourceType: String
     public let sourceURI: String
 

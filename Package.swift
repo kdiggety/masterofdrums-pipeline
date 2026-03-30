@@ -34,7 +34,11 @@ let package = Package(
         .target(
             name: "PipelineRuntime",
             dependencies: ["PipelineDomain", "PipelineApplication", "PipelineInfrastructure"],
-            path: "Sources/PipelineRuntime"
+            path: "Sources/PipelineRuntime",
+            linkerSettings: [
+                .linkedFramework("AVFoundation"),
+                .linkedFramework("CoreMedia")
+            ]
         ),
         .executableTarget(
             name: "PipelineService",

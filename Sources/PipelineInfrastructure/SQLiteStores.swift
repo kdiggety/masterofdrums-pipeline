@@ -176,6 +176,100 @@ public actor SQLiteWorkflowEventStore: WorkflowEventStore {
     }
 }
 
+public actor SQLiteArtifactStore: ArtifactStore {
+    private let database: SQLiteDatabase
+
+    public init(database: SQLiteDatabase) {
+        self.database = database
+    }
+
+    public func insert(_ artifact: ArtifactRecord) async throws {
+        try database.withConnection { handle in
+            let statement = try database.prepare(
+                """
+                INSERT INTO artifacts (
+                    id, workflow_id, job_id, artifact_type, uri, content_type, checksum, metadata_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+                """,
+                on: handle
+            )
+            defer { sqlite3_finalize(statement) }
+
+            try database.bind(text: artifact.id, at: 1, in: statement, on: handle)
+            try database.bind(text: artifact.workflowID, at: 2, in: statement, on: handle)
+            try database.bind(text: artifact.jobID, at: 3, in: statement, on: handle)
+            try database.bind(text: artifact.artifactType, at: 4, in: statement, on: handle)
+            try database.bind(text: artifact.uri, at: 5, in: statement, on: handle)
+            try database.bind(text: artifact.contentType, at: 6, in: statement, on: handle)
+            try database.bind(text: artifact.checksum, at: 7, in: statement, on: handle)
+            try database.bind(text: artifact.metadataJSON, at: 8, in: statement, on: handle)
+            try database.bind(text: database.iso8601String(from: artifact.createdAt), at: 9, in: statement, on: handle)
+            try database.stepExpectDone(statement, on: handle)
+        }
+    }
+
+    public func list(workflowID: String?, jobID: String?, limit: Int) async throws -> [ArtifactRecord] {
+        try database.withConnection { handle in
+            var clauses: [String] = []
+            if workflowID != nil { clauses.append("workflow_id = ?") }
+            if jobID != nil { clauses.append("job_id = ?") }
+            let whereClause = clauses.isEmpty ? "" : "WHERE \(clauses.joined(separator: " AND "))"
+            let sql = """
+            SELECT id, workflow_id, job_id, artifact_type, uri, content_type, checksum, metadata_json, created_at
+            FROM artifacts
+            \(whereClause)
+            ORDER BY created_at DESC
+            LIMIT ?;
+            """
+            let statement = try database.prepare(sql, on: handle)
+            defer { sqlite3_finalize(statement) }
+
+            var bindIndex: Int32 = 1
+            if let workflowID {
+                try database.bind(text: workflowID, at: bindIndex, in: statement, on: handle)
+                bindIndex += 1
+            }
+            if let jobID {
+                try database.bind(text: jobID, at: bindIndex, in: statement, on: handle)
+                bindIndex += 1
+            }
+            try database.bind(int: max(1, limit), at: bindIndex, in: statement, on: handle)
+
+            var results: [ArtifactRecord] = []
+            while true {
+                let result = sqlite3_step(statement)
+                if result == SQLITE_ROW {
+                    results.append(ArtifactRecord(
+                        id: string(at: 0, in: statement),
+                        workflowID: optionalString(at: 1, in: statement),
+                        jobID: optionalString(at: 2, in: statement),
+                        artifactType: string(at: 3, in: statement),
+                        uri: string(at: 4, in: statement),
+                        contentType: optionalString(at: 5, in: statement),
+                        checksum: optionalString(at: 6, in: statement),
+                        metadataJSON: optionalString(at: 7, in: statement),
+                        createdAt: database.date(from: optionalString(at: 8, in: statement)) ?? Date()
+                    ))
+                } else if result == SQLITE_DONE {
+                    break
+                } else {
+                    throw SQLiteDatabaseError.stepFailed(String(cString: sqlite3_errmsg(handle)))
+                }
+            }
+            return results
+        }
+    }
+
+    private func string(at index: Int32, in statement: OpaquePointer) -> String {
+        optionalString(at: index, in: statement) ?? ""
+    }
+
+    private func optionalString(at index: Int32, in statement: OpaquePointer) -> String? {
+        guard let pointer = sqlite3_column_text(statement, index) else { return nil }
+        return String(cString: pointer)
+    }
+}
+
 public actor SQLiteJobStore: JobStore {
     private let database: SQLiteDatabase
 
@@ -415,7 +509,7 @@ public actor SQLiteJobStore: JobStore {
     }
 
     private func decodeJob(from statement: OpaquePointer) throws -> PipelineJob {
-        let type = PipelineJobType(rawValue: string(at: 2, in: statement)) ?? .chartIngest
+        let type = PipelineJobType(rawValue: string(at: 2, in: statement)) ?? .audioIngest
         let status = PipelineJobStatus(rawValue: string(at: 3, in: statement)) ?? .queued
 
         return PipelineJob(
