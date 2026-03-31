@@ -159,6 +159,26 @@ swift run MasterOfDrumsPipeline list-jobs
 swift run MasterOfDrumsPipeline show-job <job-id>
 ```
 
+## Setup Script
+
+A bootstrap script is included at `scripts/setup-pipeline.sh`.
+
+Example usage:
+
+```bash
+# local / all-in-one setup
+scripts/setup-pipeline.sh
+
+# pipeline host with DB/artifacts on a mounted remote volume
+scripts/setup-pipeline.sh \
+  --database-path /Volumes/mod-pipeline-db/masterofdrums-pipeline.sqlite \
+  --artifact-root /Volumes/mod-pipeline-db/artifacts
+```
+
+Important: the current MVP still uses SQLite. If you place the database on a separate machine,
+that machine must expose storage to the pipeline host with SQLite-compatible file locking.
+Treat that as a transitional deployment shape until the pipeline moves to a network database.
+
 Note: this assumes Swift and SQLite development libraries are available on the machine.
 
 See `Docs/architecture/standalone-pipeline-plan.md`, `Docs/database/sqlite-schema.md`, and `Docs/interfaces/cli-interface-outline.md`.
