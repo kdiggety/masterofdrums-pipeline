@@ -7,13 +7,18 @@ struct ChartGenerationOutput {
 }
 
 enum ChartGenerator {
+    private static let fallbackSubdivisionsPerBeat = 4
+
     static func generate(from analysis: AudioAnalysisContract, generatedAt: Date, normalizedAnalysisArtifactURI: String) -> ChartGenerationOutput {
         let timeSignature = TimeSignature(numerator: 4, denominator: 4)
         let ticksPerBeat = 480
         let beatGrid = makeBeatGrid(from: analysis, timeSignature: timeSignature)
-        let drumEvents = makeDrumEvents(from: analysis, beatGrid: beatGrid)
+        let drumEventResult = makeDrumEvents(from: analysis, beatGrid: beatGrid)
+        let drumEvents = drumEventResult.events
         let measures = makeMeasures(from: beatGrid, timeSignature: timeSignature)
-        let warnings = combinedWarnings(for: analysis, usedFallbackDrumEvents: drumEvents.allSatisfy { ($0.sourceLabel ?? "").hasPrefix("heuristic_") })
+        let warnings = combinedWarnings(for: analysis, beatGrid: beatGrid, drumEventDiagnostics: drumEventResult.diagnostics)
+        let detectedSubdivisionCount = inferredSubdivisionsPerBeat(from: beatGrid)
+        let usedAnalyzerEvents = drumEvents.contains(where: { !($0.sourceLabel ?? "").hasPrefix("heuristic_") })
 
         let normalized = NormalizedAnalysisContract(
             source: NormalizedAnalysisSource(
@@ -36,12 +41,12 @@ enum ChartGenerator {
             beatGrid: beatGrid,
             drumEvents: drumEvents,
             warnings: warnings,
-            note: drumEvents.contains(where: { !($0.sourceLabel ?? "").hasPrefix("heuristic_") })
-                ? "Normalized analysis generated from analyzer timing/event output."
-                : "Heuristic normalization generated from coarse analysis summary."
+            note: usedAnalyzerEvents
+                ? "Normalized analysis generated from analyzer timing/event output with \(detectedSubdivisionCount)x subdivision anchors per beat."
+                : "Heuristic normalization generated from coarse analysis summary with \(detectedSubdivisionCount)x fallback subdivision anchors per beat."
         )
 
-        let notes = makeChartNotes(from: drumEvents, ticksPerBeat: ticksPerBeat)
+        let notes = makeChartNotes(from: drumEvents, ticksPerBeat: ticksPerBeat, subdivisionsPerBeat: detectedSubdivisionCount)
         let lanes = Array(Set(notes.map(\.lane))).sorted { $0.rawValue < $1.rawValue }
         let baseChart = BaseChartContract(
             source: BaseChartSource(
@@ -55,20 +60,35 @@ enum ChartGenerator {
                 ticksPerBeat: ticksPerBeat,
                 offsetSeconds: analysis.analysis.downbeatOffsetSeconds ?? 0,
                 lanes: lanes.isEmpty ? [.kick] : lanes,
-                difficulty: drumEvents.contains(where: { !($0.sourceLabel ?? "").hasPrefix("heuristic_") }) ? "prototype" : "normal",
+                difficulty: usedAnalyzerEvents ? "prototype" : "normal",
                 measures: measures,
                 notes: notes
             ),
             warnings: warnings,
-            note: drumEvents.contains(where: { !($0.sourceLabel ?? "").hasPrefix("heuristic_") })
-                ? "Base chart generated from analyzer timing and mapped drum-event candidates."
-                : "Heuristic base chart intended as a deterministic playable scaffold."
+            note: usedAnalyzerEvents
+                ? "Base chart generated from analyzer timing and mapped drum-event candidates using \(detectedSubdivisionCount)x quantization."
+                : "Heuristic base chart intended as a deterministic playable scaffold using \(detectedSubdivisionCount)x fallback quantization."
         )
 
         return ChartGenerationOutput(normalized: normalized, baseChart: baseChart)
     }
 
-    private static func combinedWarnings(for analysis: AudioAnalysisContract, usedFallbackDrumEvents: Bool) -> [String] {
+    private struct DrumEventDiagnostics {
+        let usedFallback: Bool
+        let totalCandidates: Int
+        let mappedCandidates: Int
+        let droppedMissingOnset: Int
+        let droppedUnknownLane: Int
+        let maxQuantizationErrorSeconds: Double?
+        let laneMappingsUsed: Set<DrumLane>
+    }
+
+    private struct DrumEventResult {
+        let events: [DetectedDrumEvent]
+        let diagnostics: DrumEventDiagnostics
+    }
+
+    private static func combinedWarnings(for analysis: AudioAnalysisContract, beatGrid: [BeatGridEvent], drumEventDiagnostics: DrumEventDiagnostics) -> [String] {
         var warnings = analysis.warnings
         if analysis.analysis.estimatedTempoBPM == nil {
             warnings.append("No analyzer tempo found; fallback 120 BPM grid used for chart-generation staging.")
@@ -76,8 +96,23 @@ enum ChartGenerator {
         if analysis.analysis.durationSeconds == nil {
             warnings.append("No analyzer duration found; normalized beat grid may be truncated.")
         }
-        if usedFallbackDrumEvents {
+        if beatGrid.isEmpty {
+            warnings.append("No usable beat grid anchors were available; chart timing may be incomplete.")
+        }
+        if drumEventDiagnostics.usedFallback {
             warnings.append("Analyzer did not provide usable drum-event candidates; emitted heuristic playable groove instead.")
+        }
+        if drumEventDiagnostics.droppedMissingOnset > 0 {
+            warnings.append("Dropped \(drumEventDiagnostics.droppedMissingOnset) drum-event candidates without onset timing.")
+        }
+        if drumEventDiagnostics.droppedUnknownLane > 0 {
+            warnings.append("Dropped \(drumEventDiagnostics.droppedUnknownLane) drum-event candidates with unmapped lanes.")
+        }
+        if drumEventDiagnostics.totalCandidates > 0, drumEventDiagnostics.mappedCandidates < drumEventDiagnostics.totalCandidates {
+            warnings.append("Mapped \(drumEventDiagnostics.mappedCandidates) of \(drumEventDiagnostics.totalCandidates) analyzer drum-event candidates into gameplay lanes.")
+        }
+        if let maxError = drumEventDiagnostics.maxQuantizationErrorSeconds, maxError > 0.05 {
+            warnings.append(String(format: "Quantization drift reached %.3f seconds at the furthest mapped drum event.", maxError))
         }
         var seen = Set<String>()
         return warnings.filter { seen.insert($0).inserted }
@@ -85,7 +120,14 @@ enum ChartGenerator {
 
     private static func makeBeatGrid(from analysis: AudioAnalysisContract, timeSignature: TimeSignature) -> [BeatGridEvent] {
         if let beatStarts = extractBeatStarts(from: analysis.rawAnalyzerOutput), !beatStarts.isEmpty {
-            return beatGridFromBeatStarts(beatStarts.sorted(), tempoBPM: analysis.analysis.estimatedTempoBPM, confidence: analysis.analysis.confidence, timeSignature: timeSignature)
+            return beatGridFromBeatStarts(
+                beatStarts.sorted(),
+                downbeatStarts: extractDownbeatStarts(from: analysis.rawAnalyzerOutput) ?? [],
+                tempoBPM: analysis.analysis.estimatedTempoBPM,
+                confidence: analysis.analysis.confidence,
+                timeSignature: timeSignature,
+                subdivisionsPerBeat: inferredAnalyzerSubdivisions(from: analysis.rawAnalyzerOutput) ?? fallbackSubdivisionsPerBeat
+            )
         }
 
         let tempo = analysis.analysis.estimatedTempoBPM ?? 120
@@ -94,17 +136,18 @@ enum ChartGenerator {
         let duration = max(analysis.analysis.durationSeconds ?? downbeatOffset + secondsPerBeat * 4, downbeatOffset + secondsPerBeat)
         let rawBeatCount = Int(ceil((duration - downbeatOffset) / secondsPerBeat))
         let beatCount = max(rawBeatCount, 1)
-        let subdivisionsPerBeat = 2
+        let subdivisionsPerBeat = fallbackSubdivisionsPerBeat
 
         var beatGrid: [BeatGridEvent] = []
         beatGrid.reserveCapacity(beatCount * subdivisionsPerBeat)
 
         for beatIndex in 0..<beatCount {
+            let beatStart = downbeatOffset + Double(beatIndex) * secondsPerBeat
             let barIndex = beatIndex / timeSignature.numerator
             let beatInBar = (beatIndex % timeSignature.numerator) + 1
             for subdivisionInBeat in 0..<subdivisionsPerBeat {
                 let subdivisionIndex = beatIndex * subdivisionsPerBeat + subdivisionInBeat
-                let startSeconds = downbeatOffset + (Double(beatIndex) + Double(subdivisionInBeat) / Double(subdivisionsPerBeat)) * secondsPerBeat
+                let startSeconds = beatStart + Double(subdivisionInBeat) / Double(subdivisionsPerBeat) * secondsPerBeat
                 guard startSeconds <= duration + 0.0001 else { continue }
                 let slotDuration = secondsPerBeat / Double(subdivisionsPerBeat)
                 let durationSeconds = min(slotDuration, max(duration - startSeconds, 0))
@@ -129,61 +172,201 @@ enum ChartGenerator {
         return beatGrid
     }
 
-    private static func beatGridFromBeatStarts(_ beatStarts: [Double], tempoBPM: Double?, confidence: Double?, timeSignature: TimeSignature) -> [BeatGridEvent] {
-        beatStarts.enumerated().map { index, startSeconds in
-            let durationSeconds: Double? = index + 1 < beatStarts.count ? max(0, beatStarts[index + 1] - startSeconds) : nil
-            let barIndex = index / timeSignature.numerator
-            let beatInBar = (index % timeSignature.numerator) + 1
-            return BeatGridEvent(
-                beatIndex: index,
-                barIndex: barIndex,
-                beatInBar: beatInBar,
-                subdivisionIndex: index,
-                subdivisionInBeat: 0,
-                startSeconds: startSeconds,
-                durationSeconds: durationSeconds,
-                isDownbeat: beatInBar == 1,
-                tempoBPM: tempoBPM,
-                timeSignature: beatInBar == 1 ? timeSignature : nil,
-                confidence: confidence
-            )
+    private static func beatGridFromBeatStarts(
+        _ beatStarts: [Double],
+        downbeatStarts: [Double],
+        tempoBPM: Double?,
+        confidence: Double?,
+        timeSignature: TimeSignature,
+        subdivisionsPerBeat: Int
+    ) -> [BeatGridEvent] {
+        guard !beatStarts.isEmpty else { return [] }
+        let usableSubdivisions = max(1, min(subdivisionsPerBeat, 8))
+        let estimatedFinalBeatDuration = estimateFinalBeatDuration(from: beatStarts, tempoBPM: tempoBPM)
+        let normalizedDownbeats = normalizeStarts(downbeatStarts)
+        var beatGrid: [BeatGridEvent] = []
+        beatGrid.reserveCapacity(beatStarts.count * usableSubdivisions)
+        var currentBarIndex = -1
+        var currentBeatInBar = timeSignature.numerator
+
+        for (beatIndex, startSeconds) in beatStarts.enumerated() {
+            let nextStart = beatIndex + 1 < beatStarts.count ? beatStarts[beatIndex + 1] : startSeconds + estimatedFinalBeatDuration
+            let beatDuration = max(nextStart - startSeconds, estimatedFinalBeatDuration / Double(usableSubdivisions))
+            let isDownbeatBeat = matchesKnownDownbeat(startSeconds: startSeconds, downbeatStarts: normalizedDownbeats)
+                || (normalizedDownbeats.isEmpty && beatIndex % timeSignature.numerator == 0)
+            if isDownbeatBeat {
+                currentBarIndex += 1
+                currentBeatInBar = 1
+            } else if currentBarIndex < 0 {
+                currentBarIndex = beatIndex / timeSignature.numerator
+                currentBeatInBar = (beatIndex % timeSignature.numerator) + 1
+            } else {
+                currentBeatInBar += 1
+                if currentBeatInBar > timeSignature.numerator {
+                    currentBarIndex += 1
+                    currentBeatInBar = 1
+                }
+            }
+            let barIndex = max(currentBarIndex, 0)
+            let beatInBar = max(currentBeatInBar, 1)
+
+            for subdivisionInBeat in 0..<usableSubdivisions {
+                let subdivisionIndex = beatIndex * usableSubdivisions + subdivisionInBeat
+                let slotStart = startSeconds + Double(subdivisionInBeat) / Double(usableSubdivisions) * beatDuration
+                let slotEnd = startSeconds + Double(subdivisionInBeat + 1) / Double(usableSubdivisions) * beatDuration
+                beatGrid.append(
+                    BeatGridEvent(
+                        beatIndex: beatIndex,
+                        barIndex: barIndex,
+                        beatInBar: beatInBar,
+                        subdivisionIndex: subdivisionIndex,
+                        subdivisionInBeat: subdivisionInBeat,
+                        startSeconds: slotStart,
+                        durationSeconds: max(slotEnd - slotStart, 0),
+                        isDownbeat: beatInBar == 1 && subdivisionInBeat == 0,
+                        tempoBPM: localTempo(forBeatDuration: beatDuration, fallbackTempoBPM: tempoBPM),
+                        timeSignature: subdivisionInBeat == 0 && beatInBar == 1 ? timeSignature : nil,
+                        confidence: confidence
+                    )
+                )
+            }
         }
+
+        return beatGrid
     }
 
-    private static func makeDrumEvents(from analysis: AudioAnalysisContract, beatGrid: [BeatGridEvent]) -> [DetectedDrumEvent] {
+    private static func makeDrumEvents(from analysis: AudioAnalysisContract, beatGrid: [BeatGridEvent]) -> DrumEventResult {
         let candidates = extractRawDrumEventCandidates(from: analysis.rawAnalyzerOutput)
+        var droppedMissingOnset = 0
+        var droppedUnknownLane = 0
+        var maxQuantizationError = 0.0
+        var observedQuantization = false
+        var mappedLanes = Set<DrumLane>()
+
         let mapped = candidates.enumerated().compactMap { index, candidate -> DetectedDrumEvent? in
-            guard let onsetSeconds = rawDouble(candidate["onsetSeconds"] ?? candidate["onset_seconds"] ?? candidate["time"] ?? candidate["timestamp"]),
-                  let lane = mapLane(candidate["lane"] ?? candidate["label"] ?? candidate["sourceLabel"] ?? candidate["source_label"]) else {
+            guard let onsetSeconds = rawDouble(
+                candidate["onsetSeconds"]
+                    ?? candidate["onset_seconds"]
+                    ?? candidate["time"]
+                    ?? candidate["timestamp"]
+                    ?? candidate["timeSeconds"]
+                    ?? candidate["time_seconds"]
+                    ?? candidate["startSeconds"]
+                    ?? candidate["start_seconds"]
+            ) else {
+                droppedMissingOnset += 1
+                return nil
+            }
+            guard let lane = mapLane(
+                candidate["lane"]
+                    ?? candidate["label"]
+                    ?? candidate["sourceLabel"]
+                    ?? candidate["source_label"]
+                    ?? candidate["instrument"]
+                    ?? candidate["class"]
+                    ?? candidate["type"]
+                    ?? candidate["name"]
+            ) else {
+                droppedUnknownLane += 1
                 return nil
             }
             let anchor = nearestAnchor(to: onsetSeconds, beatGrid: beatGrid)
+            if let anchor {
+                observedQuantization = true
+                maxQuantizationError = max(maxQuantizationError, abs(anchor.startSeconds - onsetSeconds))
+            }
+            mappedLanes.insert(lane)
             return DetectedDrumEvent(
-                eventID: rawString(candidate["eventID"] ?? candidate["event_id"]) ?? "evt-\(index)",
+                eventID: rawString(candidate["eventID"] ?? candidate["event_id"] ?? candidate["id"]) ?? "evt-\(index)",
                 onsetSeconds: onsetSeconds,
                 onsetBeatIndex: anchor?.beatIndex,
                 onsetSubdivisionIndex: anchor?.subdivisionIndex,
                 lane: lane,
-                velocity: rawDouble(candidate["velocity"]),
-                sourceLabel: rawString(candidate["sourceLabel"] ?? candidate["source_label"] ?? candidate["label"]),
-                confidence: rawDouble(candidate["confidence"])
+                velocity: clampedVelocity(from: candidate["velocity"] ?? candidate["strength"] ?? candidate["amplitude"]),
+                sourceLabel: rawString(candidate["sourceLabel"] ?? candidate["source_label"] ?? candidate["label"] ?? candidate["instrument"] ?? candidate["class"] ?? candidate["type"]),
+                confidence: rawDouble(candidate["confidence"] ?? candidate["probability"] ?? candidate["score"])
             )
         }
 
         if !mapped.isEmpty {
-            return mapped.sorted {
-                if $0.onsetSeconds == $1.onsetSeconds { return $0.lane.rawValue < $1.lane.rawValue }
-                return $0.onsetSeconds < $1.onsetSeconds
-            }
+            return DrumEventResult(
+                events: mapped.sorted {
+                    if $0.onsetSeconds == $1.onsetSeconds { return $0.lane.rawValue < $1.lane.rawValue }
+                    return $0.onsetSeconds < $1.onsetSeconds
+                },
+                diagnostics: DrumEventDiagnostics(
+                    usedFallback: false,
+                    totalCandidates: candidates.count,
+                    mappedCandidates: mapped.count,
+                    droppedMissingOnset: droppedMissingOnset,
+                    droppedUnknownLane: droppedUnknownLane,
+                    maxQuantizationErrorSeconds: observedQuantization ? maxQuantizationError : nil,
+                    laneMappingsUsed: mappedLanes
+                )
+            )
         }
 
-        return heuristicDrumEvents(from: beatGrid, confidence: analysis.analysis.confidence)
+        let fallback = heuristicDrumEvents(from: beatGrid, confidence: analysis.analysis.confidence)
+        return DrumEventResult(
+            events: fallback,
+            diagnostics: DrumEventDiagnostics(
+                usedFallback: true,
+                totalCandidates: candidates.count,
+                mappedCandidates: 0,
+                droppedMissingOnset: droppedMissingOnset,
+                droppedUnknownLane: droppedUnknownLane,
+                maxQuantizationErrorSeconds: nil,
+                laneMappingsUsed: Set(fallback.map(\.lane))
+            )
+        )
     }
 
     private static func heuristicDrumEvents(from beatGrid: [BeatGridEvent], confidence: Double?) -> [DetectedDrumEvent] {
         var events: [DetectedDrumEvent] = []
         for anchor in beatGrid {
-            if anchor.subdivisionInBeat > 0 {
+            switch anchor.subdivisionInBeat {
+            case 0:
+                events.append(
+                    DetectedDrumEvent(
+                        onsetSeconds: anchor.startSeconds,
+                        onsetBeatIndex: anchor.beatIndex,
+                        onsetSubdivisionIndex: anchor.subdivisionIndex,
+                        lane: .hihatClosed,
+                        velocity: anchor.isDownbeat ? 0.7 : 0.62,
+                        sourceLabel: "heuristic_backbeat_hat",
+                        confidence: confidence
+                    )
+                )
+
+                let mainLane: DrumLane
+                let velocity: Double
+                switch anchor.beatInBar {
+                case 1:
+                    mainLane = .kick
+                    velocity = 0.9
+                case 2, 4:
+                    mainLane = .snare
+                    velocity = 0.92
+                case 3:
+                    mainLane = .kick
+                    velocity = 0.82
+                default:
+                    mainLane = .hihatClosed
+                    velocity = 0.6
+                }
+
+                events.append(
+                    DetectedDrumEvent(
+                        onsetSeconds: anchor.startSeconds,
+                        onsetBeatIndex: anchor.beatIndex,
+                        onsetSubdivisionIndex: anchor.subdivisionIndex,
+                        lane: mainLane,
+                        velocity: velocity,
+                        sourceLabel: "heuristic_backbeat",
+                        confidence: confidence
+                    )
+                )
+            case 2:
                 events.append(
                     DetectedDrumEvent(
                         onsetSeconds: anchor.startSeconds,
@@ -191,53 +374,13 @@ enum ChartGenerator {
                         onsetSubdivisionIndex: anchor.subdivisionIndex,
                         lane: .hihatClosed,
                         velocity: 0.55,
-                        sourceLabel: "heuristic_hat_subdivision",
+                        sourceLabel: "heuristic_hat_offbeat",
                         confidence: confidence
                     )
                 )
+            default:
                 continue
             }
-
-            events.append(
-                DetectedDrumEvent(
-                    onsetSeconds: anchor.startSeconds,
-                    onsetBeatIndex: anchor.beatIndex,
-                    onsetSubdivisionIndex: anchor.subdivisionIndex,
-                    lane: .hihatClosed,
-                    velocity: anchor.isDownbeat ? 0.7 : 0.62,
-                    sourceLabel: "heuristic_backbeat_hat",
-                    confidence: confidence
-                )
-            )
-
-            let mainLane: DrumLane
-            let velocity: Double
-            switch anchor.beatInBar {
-            case 1:
-                mainLane = .kick
-                velocity = 0.9
-            case 2, 4:
-                mainLane = .snare
-                velocity = 0.92
-            case 3:
-                mainLane = .kick
-                velocity = 0.82
-            default:
-                mainLane = .hihatClosed
-                velocity = 0.6
-            }
-
-            events.append(
-                DetectedDrumEvent(
-                    onsetSeconds: anchor.startSeconds,
-                    onsetBeatIndex: anchor.beatIndex,
-                    onsetSubdivisionIndex: anchor.subdivisionIndex,
-                    lane: mainLane,
-                    velocity: velocity,
-                    sourceLabel: "heuristic_backbeat",
-                    confidence: confidence
-                )
-            )
         }
 
         if let firstDownbeat = beatGrid.first(where: { $0.isDownbeat }) {
@@ -273,13 +416,13 @@ enum ChartGenerator {
         }
     }
 
-    private static func makeChartNotes(from drumEvents: [DetectedDrumEvent], ticksPerBeat: Int) -> [BaseChartNote] {
-        let subdivisionTicks = ticksPerBeat / 2
+    private static func makeChartNotes(from drumEvents: [DetectedDrumEvent], ticksPerBeat: Int, subdivisionsPerBeat: Int) -> [BaseChartNote] {
+        let ticksPerSubdivision = max(ticksPerBeat / max(subdivisionsPerBeat, 1), 1)
         return drumEvents.map { event in
             let beatIndex = event.onsetBeatIndex ?? 0
             let tick: Int
             if let subdivisionIndex = event.onsetSubdivisionIndex {
-                tick = subdivisionIndex * subdivisionTicks
+                tick = subdivisionIndex * ticksPerSubdivision
             } else {
                 tick = beatIndex * ticksPerBeat
             }
@@ -301,46 +444,161 @@ enum ChartGenerator {
     }
 
     private static func extractBeatStarts(from raw: RawJSONValue?) -> [Double]? {
-        guard let root = raw?.dictionary else { return nil }
-        let candidates: [RawJSONValue?] = [root["beats"], root["beatTimes"], root["beat_times"], root["timing"]?.dictionary?["beats"]]
-        for candidate in candidates {
-            if let values = candidate?.array?.compactMap({ rawDouble($0) }), !values.isEmpty {
-                return values
+        for root in candidateRootObjects(from: raw) {
+            let candidates: [RawJSONValue?] = [
+                root["beats"],
+                root["beatTimes"],
+                root["beat_times"],
+                root["timing"]?.dictionary?["beats"],
+                root["timing"]?.dictionary?["beatTimes"],
+                root["timing"]?.dictionary?["beat_times"]
+            ]
+            for candidate in candidates {
+                let values = extractTimingValues(from: candidate)
+                if !values.isEmpty { return normalizeStarts(values) }
             }
-            if let objects = candidate?.array?.compactMap({ $0.dictionary }), !objects.isEmpty {
-                let values = objects.compactMap { rawDouble($0["startSeconds"] ?? $0["start_seconds"] ?? $0["time"] ?? $0["timestamp"]) }
-                if !values.isEmpty { return values }
+        }
+        return nil
+    }
+
+    private static func extractDownbeatStarts(from raw: RawJSONValue?) -> [Double]? {
+        for root in candidateRootObjects(from: raw) {
+            let candidates: [RawJSONValue?] = [
+                root["downbeats"],
+                root["downbeatTimes"],
+                root["downbeat_times"],
+                root["timing"]?.dictionary?["downbeats"],
+                root["timing"]?.dictionary?["downbeatTimes"],
+                root["timing"]?.dictionary?["downbeat_times"]
+            ]
+            for candidate in candidates {
+                let values = extractTimingValues(from: candidate)
+                if !values.isEmpty { return normalizeStarts(values) }
             }
         }
         return nil
     }
 
     private static func extractRawDrumEventCandidates(from raw: RawJSONValue?) -> [[String: RawJSONValue]] {
-        guard let root = raw?.dictionary else { return [] }
-        let candidateArrays: [RawJSONValue?] = [root["drumEvents"], root["drum_events"], root["events"], root["hits"], root["notes"]]
-        for candidate in candidateArrays {
-            let values = candidate?.array?.compactMap { $0.dictionary } ?? []
-            if !values.isEmpty { return values }
+        for root in candidateRootObjects(from: raw) {
+            let candidateArrays: [RawJSONValue?] = [
+                root["drumEvents"],
+                root["drum_events"],
+                root["events"],
+                root["hits"],
+                root["notes"],
+                root["drums"]?.dictionary?["events"],
+                root["drums"]?.dictionary?["hits"],
+                root["percussion"]?.dictionary?["events"],
+                root["percussion"]?.dictionary?["hits"],
+                root["timing"]?.dictionary?["drumEvents"],
+                root["timing"]?.dictionary?["drum_events"]
+            ]
+            for candidate in candidateArrays {
+                let values = candidate?.array?.compactMap { $0.dictionary } ?? []
+                if !values.isEmpty { return values }
+            }
         }
         return []
     }
 
+    private static func inferredAnalyzerSubdivisions(from raw: RawJSONValue?) -> Int? {
+        for root in candidateRootObjects(from: raw) {
+            let explicit = rawInt(
+                root["subdivisionsPerBeat"]
+                    ?? root["subdivisions_per_beat"]
+                    ?? root["timing"]?.dictionary?["subdivisionsPerBeat"]
+                    ?? root["timing"]?.dictionary?["subdivisions_per_beat"]
+            )
+            if let explicit {
+                return max(1, min(explicit, 8))
+            }
+        }
+        return nil
+    }
+
+    private static func candidateRootObjects(from raw: RawJSONValue?) -> [[String: RawJSONValue]] {
+        guard let root = raw?.dictionary else { return [] }
+        var objects: [[String: RawJSONValue]] = [root]
+        for key in ["result", "output", "payload", "data", "analysis"] {
+            if let nested = root[key]?.dictionary {
+                objects.append(nested)
+            }
+        }
+        return objects
+    }
+
+    private static func extractTimingValues(from candidate: RawJSONValue?) -> [Double] {
+        if let values = candidate?.array?.compactMap({ rawDouble($0) }), !values.isEmpty {
+            return values
+        }
+        if let objects = candidate?.array?.compactMap({ $0.dictionary }), !objects.isEmpty {
+            return objects.compactMap {
+                rawDouble($0["startSeconds"] ?? $0["start_seconds"] ?? $0["time"] ?? $0["timestamp"] ?? $0["onsetSeconds"] ?? $0["onset_seconds"])
+            }
+        }
+        return []
+    }
+
+    private static func normalizeStarts(_ values: [Double]) -> [Double] {
+        let sorted = values.filter { $0.isFinite && $0 >= 0 }.sorted()
+        var deduped: [Double] = []
+        for value in sorted {
+            if let last = deduped.last, abs(last - value) <= 0.0005 { continue }
+            deduped.append(value)
+        }
+        return deduped
+    }
+
+    private static func matchesKnownDownbeat(startSeconds: Double, downbeatStarts: [Double]) -> Bool {
+        downbeatStarts.contains { abs($0 - startSeconds) <= 0.0005 }
+    }
+
+    private static func inferredSubdivisionsPerBeat(from beatGrid: [BeatGridEvent]) -> Int {
+        let maxSubdivisionInBeat = beatGrid.map(\.subdivisionInBeat).max() ?? 0
+        return max(maxSubdivisionInBeat + 1, 1)
+    }
+
+    private static func estimateFinalBeatDuration(from beatStarts: [Double], tempoBPM: Double?) -> Double {
+        let intervals = zip(beatStarts, beatStarts.dropFirst()).map { max($1 - $0, 0.0001) }
+        if !intervals.isEmpty {
+            return intervals.reduce(0, +) / Double(intervals.count)
+        }
+        if let tempoBPM, tempoBPM > 0 {
+            return 60.0 / tempoBPM
+        }
+        return 0.5
+    }
+
+    private static func localTempo(forBeatDuration beatDuration: Double, fallbackTempoBPM: Double?) -> Double? {
+        guard beatDuration > 0 else { return fallbackTempoBPM }
+        return 60.0 / beatDuration
+    }
+
     private static func mapLane(_ rawValue: RawJSONValue?) -> DrumLane? {
-        guard let raw = rawString(rawValue)?.lowercased().replacingOccurrences(of: "-", with: "_") else { return nil }
+        guard let raw = normalizedLaneLabel(rawValue) else { return nil }
         switch raw {
-        case "kick", "bd", "bass_drum": return .kick
-        case "snare", "sd": return .snare
-        case "hihat_closed", "closed_hihat", "closed_hat", "hhc": return .hihatClosed
-        case "hihat_open", "open_hihat", "open_hat", "hho": return .hihatOpen
-        case "tom_low", "low_tom": return .tomLow
-        case "tom_mid", "mid_tom", "tom_medium": return .tomMid
-        case "tom_high", "high_tom": return .tomHigh
-        case "crash", "crash_cymbal": return .crash
-        case "ride", "ride_cymbal": return .ride
-        case "clap": return .clap
-        case "percussion", "perc": return .percussion
+        case "kick", "bd", "bass_drum", "bassdrum", "kik": return .kick
+        case "snare", "sd", "sn", "rimshot", "cross_stick": return .snare
+        case "hihat_closed", "closed_hihat", "closed_hat", "closed_hi_hat", "hhc", "hat_closed", "hi_hat_closed", "chh": return .hihatClosed
+        case "hihat_open", "open_hihat", "open_hat", "open_hi_hat", "hho", "hat_open", "hi_hat_open", "ohh": return .hihatOpen
+        case "tom_low", "low_tom", "floor_tom", "floortom": return .tomLow
+        case "tom_mid", "mid_tom", "middle_tom", "tom_medium": return .tomMid
+        case "tom_high", "high_tom", "rack_tom": return .tomHigh
+        case "crash", "crash_cymbal", "crash_left", "crash_right": return .crash
+        case "ride", "ride_cymbal", "ride_bell": return .ride
+        case "clap", "handclap", "hand_clap": return .clap
+        case "percussion", "perc", "cowbell", "shaker", "tambourine": return .percussion
         default: return nil
         }
+    }
+
+    private static func normalizedLaneLabel(_ rawValue: RawJSONValue?) -> String? {
+        guard let raw = rawString(rawValue)?.lowercased() else { return nil }
+        let collapsed = raw
+            .replacingOccurrences(of: "-", with: "_")
+            .replacingOccurrences(of: " ", with: "_")
+        return collapsed
     }
 
     private static func rawString(_ value: RawJSONValue?) -> String? {
@@ -360,5 +618,19 @@ enum ChartGenerator {
         case .string(let string): return Double(string)
         default: return nil
         }
+    }
+
+    private static func rawInt(_ value: RawJSONValue?) -> Int? {
+        guard let value else { return nil }
+        switch value {
+        case .number(let number): return Int(number)
+        case .string(let string): return Int(string)
+        default: return nil
+        }
+    }
+
+    private static func clampedVelocity(from value: RawJSONValue?) -> Double? {
+        guard let raw = rawDouble(value) else { return nil }
+        return min(max(raw, 0), 1)
     }
 }

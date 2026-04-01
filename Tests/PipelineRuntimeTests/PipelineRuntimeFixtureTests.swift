@@ -121,6 +121,64 @@ final class PipelineRuntimeFixtureTests: XCTestCase {
         XCTAssertEqual(persistedBaseChart.chart.notes.count, 2)
     }
 
+    func testWorkerNormalizesWrappedAnalyzerOutputWithDownbeatsAndMessyEventKeys() async throws {
+        let fixtureURL = try XCTUnwrap(Bundle.module.url(forResource: "known-tone", withExtension: "wav"))
+        let tempRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("masterofdrums-pipeline-tests", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+        let runtime = PipelineRuntime(
+            configuration: SQLiteConfiguration(
+                databasePath: tempRoot.appendingPathComponent("pipeline.sqlite").path,
+                artifactRoot: tempRoot.appendingPathComponent("artifacts", isDirectory: true).path,
+                autoMigrate: true
+            )
+        )
+
+        let analyzerCommand = #"""
+        cat > {output} <<'JSON'
+        {"result":{"timing":{"beats":[{"time":0.25},{"time":0.75},{"time":1.25},{"time":1.75},{"time":2.25}],"downbeats":[0.25,2.25]},"drums":{"hits":[{"id":"evt-1","time_seconds":0.24,"instrument":"bass drum","velocity":0.98,"probability":0.91},{"id":"evt-2","time_seconds":0.76,"class":"snare","strength":0.77,"score":0.82},{"id":"evt-3","start_seconds":1.74,"type":"closed hi hat","amplitude":0.55,"confidence":0.7}]},"analysis":{"audioTrackCount":1,"confidence":0.95,"durationSeconds":2.3,"estimatedSegmentCount":1,"estimatedTempoBPM":120.0}},"note":"wrapped analyzer output","warnings":[]}
+        JSON
+        """#
+        setenv("PIPELINE_AUDIO_ANALYZER_COMMAND", analyzerCommand, 1)
+        defer { unsetenv("PIPELINE_AUDIO_ANALYZER_COMMAND") }
+
+        try await runtime.run(
+            command: .enqueueAudioIngest(
+                sourceURI: fixtureURL.absoluteString,
+                sourceType: "file",
+                requestedBy: "test",
+                idempotencyKey: nil
+            )
+        )
+        try await runtime.run(command: .worker(stopAfterIdlePolls: 1))
+
+        let jobs = try await runtime.jobs.list(status: nil)
+        let ingestJob = try XCTUnwrap(jobs.first(where: { $0.type == .audioIngest }))
+        let artifacts = try await runtime.artifacts.list(workflowID: ingestJob.workflowID, jobID: nil, limit: 10)
+
+        let normalizedArtifact = try XCTUnwrap(artifacts.first(where: { $0.artifactType == "normalized_analysis" }))
+        let normalizedArtifactURL = try XCTUnwrap(URL(string: normalizedArtifact.uri))
+        let persistedNormalized = try decode(NormalizedAnalysisContract.self, from: String(decoding: Data(contentsOf: normalizedArtifactURL), as: UTF8.self))
+
+        XCTAssertEqual(persistedNormalized.summary.beatCount, 5)
+        XCTAssertEqual(persistedNormalized.summary.barCount, 2)
+        XCTAssertEqual(persistedNormalized.drumEvents.count, 3)
+        XCTAssertEqual(persistedNormalized.drumEvents.map(\.lane), [.kick, .snare, .hihatClosed])
+        XCTAssertEqual(persistedNormalized.beatGrid.first(where: { $0.beatIndex == 0 })?.isDownbeat, true)
+        XCTAssertEqual(persistedNormalized.beatGrid.first(where: { $0.beatIndex == 4 })?.isDownbeat, true)
+        XCTAssertEqual(persistedNormalized.beatGrid.first(where: { $0.beatIndex == 0 })?.barIndex, 0)
+        XCTAssertEqual(persistedNormalized.beatGrid.first(where: { $0.beatIndex == 4 })?.barIndex, 1)
+
+        let baseChartArtifact = try XCTUnwrap(artifacts.first(where: { $0.artifactType == "base_chart" }))
+        let baseChartArtifactURL = try XCTUnwrap(URL(string: baseChartArtifact.uri))
+        let persistedBaseChart = try decode(BaseChartContract.self, from: String(decoding: Data(contentsOf: baseChartArtifactURL), as: UTF8.self))
+        XCTAssertEqual(persistedBaseChart.chart.notes.count, 3)
+        XCTAssertEqual(persistedBaseChart.chart.notes.map(\.lane), [.kick, .snare, .hihatClosed])
+    }
+
     private func decode<T: Decodable>(_ type: T.Type, from json: String?) throws -> T {
         let jsonString = try XCTUnwrap(json)
         let data = try XCTUnwrap(jsonString.data(using: .utf8))

@@ -14,8 +14,12 @@
           "measureCountRange": { "min": 1, "max": 4 },
           "requiredLanes": ["kick"],
           "allowedLanes": ["kick", "snare", "hihat_closed"],
+          "minDistinctLanes": 1,
           "maxSimultaneousNotes": 1,
-          "maxNotesPerBeat": 2
+          "maxNotesPerBeat": 2,
+          "maxNotesPerMeasure": 8,
+          "allowedEmptyMeasures": 1,
+          "minimumScore": 0.7
         }
       ]
     }

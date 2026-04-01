@@ -78,7 +78,14 @@ Accepted: emit a simpler JSON object with fields like:
 - `warnings[]`
 - `note`
 
-The worker will wrap that output into the stable contract.
+For chart-generation normalization, looser wrapper outputs are also accepted when they contain recognizable timing/event payloads, for example:
+
+- beat arrays at `beats`, `beatTimes`, `beat_times`, or nested under `timing.*`
+- downbeat arrays at `downbeats`, `downbeatTimes`, `downbeat_times`, or nested under `timing.*`
+- drum-event arrays at `drumEvents`, `drum_events`, `events`, `hits`, `notes`, or nested under `drums.*` / `percussion.*`
+- wrapper containers like `result`, `output`, `payload`, or `data`
+
+The worker will wrap that output into the stable contract, and downstream chart generation will attempt to normalize those common variants before falling back to heuristic timing/events.
 
 ## Known risks
 
