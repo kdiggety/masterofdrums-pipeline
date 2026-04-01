@@ -16,8 +16,8 @@ Responsibilities:
 - execute job handlers
 - persist retries and failures
 
-### `masterofdrums-pipeline enqueue-chart-ingest --source-uri <uri> [--source-type midi] [--requested-by cli] [--idempotency-key <key>]`
-Create a workflow plus the initial chart-ingest job.
+### `masterofdrums-pipeline enqueue-audio-ingest --source-uri <uri> [--source-type file] [--requested-by cli] [--idempotency-key <key>]`
+Create a workflow plus the initial audio-ingest job.
 
 ### `masterofdrums-pipeline list-jobs [--status queued|running|failed|succeeded]`
 List jobs from the database.
@@ -36,3 +36,5 @@ Cancel a queued or running job if policy allows.
 1. CLI is the MVP operational surface.
 2. A future HTTP/API interface should wrap the same application layer rather than replacing it.
 3. Commands should remain safe, explicit, and scriptable.
+4. The `audio_analyze` stage emits an `audio_analysis` artifact whose persisted JSON file should match `Resources/schemas/audio-analysis-result.schema.json`.
+5. The `audio_analysis` artifact `metadata_json` is a compact summary for quick listing/querying, not the full persisted contract.

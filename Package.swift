@@ -44,6 +44,14 @@ let package = Package(
             name: "PipelineService",
             dependencies: ["PipelineRuntime"],
             path: "Sources/PipelineService"
+        ),
+        .testTarget(
+            name: "PipelineRuntimeTests",
+            dependencies: ["PipelineRuntime", "PipelineApplication", "PipelineDomain", "PipelineInfrastructure"],
+            path: "Tests/PipelineRuntimeTests",
+            resources: [
+                .process("Fixtures")
+            ]
         )
     ]
 )

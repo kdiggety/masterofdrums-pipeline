@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import CryptoKit
 #if canImport(Glibc)
 import Glibc
 #elseif canImport(Darwin)
@@ -348,37 +349,48 @@ public struct PipelineRuntime {
             throw PipelineRuntimeError.sourceNotFound(payload.sourceURI)
         }
 
-        let asset = AVURLAsset(url: fileURL)
-        let duration = try await asset.load(.duration)
-        let durationSeconds = duration.seconds
-        let tracks = try await asset.loadTracks(withMediaType: .audio)
-
-        let segmentCount: Int
-        if durationSeconds.isFinite, durationSeconds > 0 {
-            segmentCount = max(1, Int(ceil(durationSeconds / 2.0)))
-        } else {
-            segmentCount = 0
+        let analyzer = AudioAnalyzerConfiguration.fromEnvironment()
+        guard analyzer.isEnabled else {
+            throw PipelineRuntimeError.audioAnalyzerNotConfigured
         }
 
-        let analysis = AudioAnalyzeResult(
-            sourceType: payload.sourceType,
-            sourceURI: payload.sourceURI,
-            requestedBy: payload.requestedBy,
-            analyzedAt: now,
-            durationSeconds: durationSeconds.isFinite ? durationSeconds : nil,
-            audioTrackCount: tracks.count,
-            estimatedSegmentCount: segmentCount,
-            note: "Placeholder audio analysis completed. Ready for chart-generation handoff."
+        let outputURL = try prepareArtifactOutputURL(workflowID: job.workflowID, jobID: job.id, createdAt: now)
+        let rawAnalysis = try runAudioAnalyzer(
+            analyzer,
+            sourceURL: fileURL,
+            outputURL: outputURL,
+            payload: payload,
+            analyzedAt: now
         )
+        let analysis = AudioAnalysisContract(
+            schemaVersion: rawAnalysis.schemaVersion,
+            source: rawAnalysis.source,
+            analysis: AudioAnalysisSummary(
+                analyzedAt: rawAnalysis.analysis.analyzedAt,
+                durationSeconds: rawAnalysis.analysis.durationSeconds,
+                audioTrackCount: rawAnalysis.analysis.audioTrackCount,
+                estimatedSegmentCount: rawAnalysis.analysis.estimatedSegmentCount,
+                estimatedTempoBPM: rawAnalysis.analysis.estimatedTempoBPM,
+                downbeatOffsetSeconds: rawAnalysis.analysis.downbeatOffsetSeconds,
+                confidence: rawAnalysis.analysis.confidence,
+                artifactURI: outputURL.absoluteString,
+                analyzerCommand: analyzer.commandTemplate
+            ),
+            segments: rawAnalysis.segments,
+            warnings: rawAnalysis.warnings,
+            note: rawAnalysis.note,
+            rawAnalyzerOutput: rawAnalysis.rawAnalyzerOutput
+        )
+        try analysis.write(to: outputURL)
 
         let artifact = ArtifactRecord(
             workflowID: job.workflowID,
             jobID: job.id,
             artifactType: "audio_analysis",
-            uri: fileURL.absoluteString,
+            uri: outputURL.absoluteString,
             contentType: "application/json",
-            checksum: nil,
-            metadataJSON: analysis.toJSONString(),
+            checksum: try Self.sha256Hex(for: outputURL),
+            metadataJSON: analysis.analysis.toJSONString(),
             createdAt: now
         )
         try await artifacts.insert(artifact)
@@ -386,11 +398,13 @@ public struct PipelineRuntime {
             workflowID: job.workflowID,
             jobID: job.id,
             eventType: "audio_analysis_completed",
-            message: "Audio analysis placeholder completed",
+            message: "Audio analysis completed and persisted",
             details: [
-                "estimated_segment_count": AnySendable(analysis.estimatedSegmentCount),
-                "audio_track_count": AnySendable(analysis.audioTrackCount),
-                "duration_seconds": AnySendable(analysis.durationSeconds ?? 0)
+                "artifact_uri": AnySendable(outputURL.absoluteString),
+                "schema_version": AnySendable(analysis.schemaVersion),
+                "segment_count": AnySendable(analysis.analysis.estimatedSegmentCount),
+                "duration_seconds": AnySendable(analysis.analysis.durationSeconds ?? 0),
+                "analyzer_command": AnySendable(analyzer.commandTemplate)
             ],
             createdAt: now
         )
@@ -438,6 +452,62 @@ public struct PipelineRuntime {
             return url
         }
         return URL(fileURLWithPath: sourceURI)
+    }
+
+    private func prepareArtifactOutputURL(workflowID: String, jobID: String, createdAt: Date) throws -> URL {
+        let rootURL = URL(fileURLWithPath: database.configuration.artifactRoot, isDirectory: true)
+        let directoryURL = rootURL
+            .appendingPathComponent("audio-analysis", isDirectory: true)
+            .appendingPathComponent(workflowID, isDirectory: true)
+        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        let stamp = Self.filenameTimestamp(createdAt)
+        return directoryURL.appendingPathComponent("\(stamp)-\(jobID).json")
+    }
+
+    private func runAudioAnalyzer(
+        _ configuration: AudioAnalyzerConfiguration,
+        sourceURL: URL,
+        outputURL: URL,
+        payload: AudioAnalyzePayload,
+        analyzedAt: Date
+    ) throws -> AudioAnalysisContract {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.arguments = ["-lc", configuration.renderCommand(inputPath: sourceURL.path, outputPath: outputURL.path)]
+
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+
+        try process.run()
+        process.waitUntilExit()
+
+        let stderrText = String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        guard process.terminationStatus == 0 else {
+            throw PipelineRuntimeError.audioAnalyzerFailed(stderrText.isEmpty ? "analyzer exited with status \(process.terminationStatus)" : stderrText)
+        }
+
+        guard FileManager.default.fileExists(atPath: outputURL.path) else {
+            throw PipelineRuntimeError.audioAnalyzerFailed("analyzer did not write output file: \(outputURL.path)")
+        }
+
+        let data = try Data(contentsOf: outputURL)
+        if let decoded = try? JSONDecoder.pipeline.decode(AudioAnalysisContract.self, from: data) {
+            return decoded
+        }
+
+        let rawObject = try JSONSerialization.jsonObject(with: data)
+        let normalized = AudioAnalysisContract.fromAnalyzerOutput(
+            rawObject,
+            sourceType: payload.sourceType,
+            sourceURI: payload.sourceURI,
+            requestedBy: payload.requestedBy,
+            analyzedAt: analyzedAt,
+            commandTemplate: configuration.commandTemplate
+        )
+        try normalized.write(to: outputURL)
+        return normalized
     }
 
     private func appendEvent(workflowID: String, jobID: String?, eventType: String, message: String?, details: [String: AnySendable], createdAt: Date) async throws {
@@ -496,6 +566,22 @@ public struct PipelineRuntime {
         return nil
     }
 
+    private static func placeholderSegments(durationSeconds: Double?, segmentCount: Int) -> [AudioAnalysisSegment] {
+        guard let durationSeconds, durationSeconds > 0, segmentCount > 0 else { return [] }
+        let segmentLength = durationSeconds / Double(segmentCount)
+        return (0..<segmentCount).map { index in
+            let start = Double(index) * segmentLength
+            let end = min(durationSeconds, Double(index + 1) * segmentLength)
+            return AudioAnalysisSegment(
+                index: index,
+                startSeconds: start,
+                endSeconds: end,
+                label: "section_\(index + 1)",
+                confidence: nil
+            )
+        }
+    }
+
     private static func contentType(for url: URL) -> String? {
         let ext = url.pathExtension.lowercased()
         switch ext {
@@ -508,6 +594,15 @@ public struct PipelineRuntime {
         case "flac": return "audio/flac"
         default: return nil
         }
+    }
+
+    private static func sha256Hex(for url: URL) throws -> String {
+        let data = try Data(contentsOf: url)
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func filenameTimestamp(_ date: Date) -> String {
+        artifactFilenameFormatter.string(from: date)
     }
 
     private static func timestamp(_ date: Date) -> String {
@@ -534,6 +629,14 @@ public struct PipelineRuntime {
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter
     }()
+    private static let artifactFilenameFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .iso8601)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyyMMdd'T'HHmmssSSS'Z'"
+        return formatter
+    }()
 
     public static let helpText = """
     MasterOfDrums Pipeline
@@ -549,6 +652,8 @@ public struct PipelineRuntime {
 
     Worker environment:
       PIPELINE_WORKER_POLL_INTERVAL_SECONDS  Seconds to wait between empty polls (default: 1)
+      PIPELINE_ARTIFACT_ROOT                 Root directory for persisted analysis artifacts
+      PIPELINE_AUDIO_ANALYZER_COMMAND        Shell command template with {input} and {output} placeholders
     """
 }
 
@@ -605,6 +710,8 @@ public enum PipelineCLIParser {
 public enum PipelineRuntimeError: LocalizedError {
     case sourceNotFound(String)
     case unsupportedJobType(String)
+    case audioAnalyzerNotConfigured
+    case audioAnalyzerFailed(String)
 
     public var errorDescription: String? {
         switch self {
@@ -612,6 +719,10 @@ public enum PipelineRuntimeError: LocalizedError {
             return "Source file not found: \(sourceURI)"
         case .unsupportedJobType(let type):
             return "Unsupported job type: \(type)"
+        case .audioAnalyzerNotConfigured:
+            return "Audio analyzer is not configured. Set PIPELINE_AUDIO_ANALYZER_COMMAND with {input} and {output} placeholders."
+        case .audioAnalyzerFailed(let message):
+            return "Audio analyzer failed: \(message)"
         }
     }
 }
@@ -632,30 +743,39 @@ public struct AudioIngestResult: Codable, Sendable {
     public let note: String
 
     public func toJSONString() -> String {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
+        let encoder = JSONEncoder.pipeline
         guard let data = try? encoder.encode(self) else { return "{}" }
         return String(decoding: data, as: UTF8.self)
     }
 }
 
-public struct AudioAnalyzeResult: Codable, Sendable {
-    public let sourceType: String
-    public let sourceURI: String
-    public let requestedBy: String
-    public let analyzedAt: Date
-    public let durationSeconds: Double?
-    public let audioTrackCount: Int
-    public let estimatedSegmentCount: Int
-    public let note: String
+public struct AudioAnalyzerConfiguration: Sendable {
+    public let commandTemplate: String
 
-    public func toJSONString() -> String {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
-        guard let data = try? encoder.encode(self) else { return "{}" }
-        return String(decoding: data, as: UTF8.self)
+    public var isEnabled: Bool {
+        !commandTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    public static func fromEnvironment(_ environment: [String: String] = ProcessInfo.processInfo.environment) -> AudioAnalyzerConfiguration {
+        AudioAnalyzerConfiguration(commandTemplate: environment["PIPELINE_AUDIO_ANALYZER_COMMAND"] ?? "")
+    }
+
+    public func renderCommand(inputPath: String, outputPath: String) -> String {
+        commandTemplate
+            .replacingOccurrences(of: "{input}", with: Self.shellEscape(inputPath))
+            .replacingOccurrences(of: "{output}", with: Self.shellEscape(outputPath))
+    }
+
+    private static func shellEscape(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+}
+
+extension JSONDecoder {
+    static var pipeline: JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
     }
 }
 

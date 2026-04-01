@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://masterofdrums.dev/schemas/audio-analysis-result.schema.json",
+  "title": "MasterOfDrums Audio Analysis Result",
+  "description": "Contract emitted by the audio_analyze stage. Designed to stay stable as placeholder analysis is replaced by real DSP-backed analysis.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "schemaURI",
+    "analysisStage",
+    "status",
+    "source",
+    "analysis",
+    "segments",
+    "warnings",
+    "note"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "schemaURI": {
+      "type": "string",
+      "format": "uri",
+      "const": "https://masterofdrums.dev/schemas/audio-analysis-result.schema.json"
+    },
+    "analysisStage": {
+      "type": "string",
+      "const": "audio_analysis_mvp"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["completed", "partial", "failed"]
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceType", "sourceURI", "requestedBy"],
+      "properties": {
+        "sourceType": { "type": "string", "minLength": 1 },
+        "sourceURI": { "type": "string", "minLength": 1 },
+        "requestedBy": { "type": "string", "minLength": 1 }
+      }
+    },
+    "analysis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["analyzedAt", "audioTrackCount", "estimatedSegmentCount"],
+      "properties": {
+        "analyzedAt": { "type": "string", "format": "date-time" },
+        "durationSeconds": { "type": ["number", "null"], "minimum": 0 },
+        "audioTrackCount": { "type": "integer", "minimum": 0 },
+        "estimatedSegmentCount": { "type": "integer", "minimum": 0 },
+        "estimatedTempoBPM": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "downbeatOffsetSeconds": { "type": ["number", "null"], "minimum": 0 },
+        "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "artifactURI": { "type": ["string", "null"], "format": "uri" },
+        "analyzerCommand": { "type": ["string", "null"], "minLength": 1 }
+      }
+    },
+    "segments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["index", "startSeconds", "endSeconds", "label"],
+        "properties": {
+          "index": { "type": "integer", "minimum": 0 },
+          "startSeconds": { "type": "number", "minimum": 0 },
+          "endSeconds": { "type": "number", "minimum": 0 },
+          "label": { "type": "string", "minLength": 1 },
+          "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }
+        }
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "note": {
+      "type": ["string", "null"],
+      "minLength": 1
+    },
+    "rawAnalyzerOutput": {
+      "type": ["object", "array", "string", "number", "boolean", "null"]
+    }
+  }
+}

@@ -39,7 +39,7 @@ This project should become a headless Swift executable that supports commands li
 
 - `masterofdrums-pipeline init-db`
 - `masterofdrums-pipeline worker`
-- `masterofdrums-pipeline enqueue-chart-ingest --source-uri ...`
+- `masterofdrums-pipeline enqueue-audio-ingest --source-uri ...`
 - `masterofdrums-pipeline list-jobs`
 - `masterofdrums-pipeline show-job <job-id>`
 
@@ -106,7 +106,7 @@ Example commands:
    - claim and execute work
    - update durable status and retry metadata
 
-3. `enqueue-chart-ingest`
+3. `enqueue-audio-ingest`
    - insert a workflow
    - insert the initial job
 
@@ -137,26 +137,29 @@ Implemented so far:
 
 Still to implement:
 
-- worker loop
-- chart ingestion port from the main app
-- retry policies and state transitions
+- real audio analyzer implementation behind the configured analyzer command
+- downstream consumers of persisted `audio_analysis` artifacts
+- broader fixture/integration coverage beyond the single known WAV path
 
 ## Current Testable Slice
 
 The repo is now aimed at a first testable CLI + SQLite slice:
 
 1. `init-db`
-2. `enqueue-chart-ingest`
-3. `list-jobs`
-4. `show-job`
+2. `enqueue-audio-ingest`
+3. `worker`
+4. `list-jobs`
+5. `list-events` / `list-artifacts`
 
 Example flow:
 
 ```bash
 swift run MasterOfDrumsPipeline init-db
-swift run MasterOfDrumsPipeline enqueue-chart-ingest --source-uri file:///tmp/test.mid --source-type midi --requested-by cli
+swift run MasterOfDrumsPipeline enqueue-audio-ingest --source-uri file:///tmp/test.wav --source-type file --requested-by cli
+swift run MasterOfDrumsPipeline worker --stop-after-idle-polls 2
 swift run MasterOfDrumsPipeline list-jobs
-swift run MasterOfDrumsPipeline show-job <job-id>
+swift run MasterOfDrumsPipeline list-events --limit 20
+swift run MasterOfDrumsPipeline list-artifacts --limit 20
 ```
 
 ## Setup Script
@@ -181,4 +184,4 @@ Treat that as a transitional deployment shape until the pipeline moves to a netw
 
 Note: this assumes Swift and SQLite development libraries are available on the machine.
 
-See `Docs/architecture/standalone-pipeline-plan.md`, `Docs/database/sqlite-schema.md`, and `Docs/interfaces/cli-interface-outline.md`.
+See `Docs/architecture/standalone-pipeline-plan.md`, `Docs/database/sqlite-schema.md`, `Docs/interfaces/cli-interface-outline.md`, and `Docs/interfaces/audio-analysis-contract.md`.

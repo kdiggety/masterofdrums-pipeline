@@ -3,16 +3,19 @@ import SQLite3
 
 public struct SQLiteConfiguration: Sendable {
     public let databasePath: String
+    public let artifactRoot: String
     public let autoMigrate: Bool
 
-    public init(databasePath: String, autoMigrate: Bool = true) {
+    public init(databasePath: String, artifactRoot: String = "./var/artifacts", autoMigrate: Bool = true) {
         self.databasePath = databasePath
+        self.artifactRoot = artifactRoot
         self.autoMigrate = autoMigrate
     }
 
     public static func fromEnvironment(_ environment: [String: String] = ProcessInfo.processInfo.environment) -> SQLiteConfiguration {
         SQLiteConfiguration(
             databasePath: environment["PIPELINE_DATABASE_PATH"] ?? "./var/masterofdrums-pipeline.sqlite",
+            artifactRoot: environment["PIPELINE_ARTIFACT_ROOT"] ?? "./var/artifacts",
             autoMigrate: (environment["PIPELINE_AUTO_MIGRATE"] ?? "true").lowercased() == "true"
         )
     }
