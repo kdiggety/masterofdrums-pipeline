@@ -71,7 +71,7 @@ final class PipelineRuntimeFixtureTests: XCTestCase {
         XCTAssertEqual(ingestResult.contentType, "audio/wav")
         XCTAssertEqual(ingestResult.audioTrackCount, 1)
         XCTAssertEqual(ingestResult.channelCount, 1)
-        XCTAssertEqual(ingestResult.sampleRate, 44_100, accuracy: 1)
+        XCTAssertEqual(try XCTUnwrap(ingestResult.sampleRate), 44_100, accuracy: 1)
         XCTAssertEqual(ingestResult.fileSizeBytes, fileSize(at: fixtureURL))
         XCTAssertGreaterThan(ingestResult.durationSeconds ?? 0, 0.9)
         XCTAssertLessThan(ingestResult.durationSeconds ?? 0, 1.1)
@@ -85,8 +85,8 @@ final class PipelineRuntimeFixtureTests: XCTestCase {
         XCTAssertEqual(analysisResult.source.requestedBy, "test")
         XCTAssertEqual(analysisResult.analysis.audioTrackCount, 1)
         XCTAssertEqual(analysisResult.analysis.estimatedSegmentCount, 1)
-        XCTAssertEqual(analysisResult.analysis.estimatedTempoBPM, 120.0, accuracy: 0.001)
-        XCTAssertEqual(analysisResult.analysis.confidence, 0.99, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(analysisResult.analysis.estimatedTempoBPM), 120.0, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(analysisResult.analysis.confidence), 0.99, accuracy: 0.001)
         XCTAssertEqual(analysisResult.analysis.artifactURI, analysisArtifact.uri)
         XCTAssertEqual(analysisResult.analysis.analyzerCommand, analyzerCommand)
         XCTAssertEqual(analysisResult.segments.count, 1)
@@ -100,7 +100,8 @@ final class PipelineRuntimeFixtureTests: XCTestCase {
     }
 
     private func decode<T: Decodable>(_ type: T.Type, from json: String?) throws -> T {
-        let data = try XCTUnwrap(json).data(using: .utf8)
+        let jsonString = try XCTUnwrap(json)
+        let data = try XCTUnwrap(jsonString.data(using: .utf8))
         let decoder = JSONDecoder.pipeline
         return try decoder.decode(type, from: data)
     }
