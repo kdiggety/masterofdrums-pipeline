@@ -11,7 +11,7 @@ import PipelineInfrastructure
 
 final class PipelineRuntimeFixtureTests: XCTestCase {
     func testWorkerProcessesKnownWAVFixtureThroughAnalyzeStage() async throws {
-        let fixtureURL = try XCTUnwrap(Bundle.module.url(forResource: "known-tone", withExtension: "wav", subdirectory: "Fixtures"))
+        let fixtureURL = try XCTUnwrap(Bundle.module.url(forResource: "known-tone", withExtension: "wav"))
         let tempRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("masterofdrums-pipeline-tests", isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
