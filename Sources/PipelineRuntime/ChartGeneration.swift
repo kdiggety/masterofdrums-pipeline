@@ -723,8 +723,8 @@ enum ChartGenerator {
         switch raw {
         case "kick", "bd", "bass_drum", "bassdrum", "bass_drum_1", "bass_drum_2", "bassdrum_1", "bassdrum_2", "kik": return .kick
         case "snare", "sd", "sn", "rimshot", "cross_stick", "side_stick": return .snare
-        case "hihat_closed", "closed_hihat", "closed_hat", "closed_hi_hat", "closed_hihat", "hhc", "hat_closed", "hi_hat_closed", "chh": return .hihatClosed
-        case "hihat_open", "open_hihat", "open_hat", "open_hi_hat", "open_hihat", "hho", "hat_open", "hi_hat_open", "ohh": return .hihatOpen
+        case "hihat_closed", "closed_hihat", "closed_hat", "closed_hi_hat", "hhc", "hat_closed", "hi_hat_closed", "chh": return .hihatClosed
+        case "hihat_open", "open_hihat", "open_hat", "open_hi_hat", "hho", "hat_open", "hi_hat_open", "ohh": return .hihatOpen
         case "tom_low", "low_tom", "floor_tom", "floortom": return .tomLow
         case "tom_mid", "mid_tom", "middle_tom", "mid_tom_1", "tom_medium": return .tomMid
         case "tom_high", "high_tom", "rack_tom", "racktom": return .tomHigh

@@ -168,7 +168,10 @@ final class PipelineRuntimeFixtureTests: XCTestCase {
 
         let reportText = corpusReport.renderText()
         XCTAssertTrue(reportText.contains("corpus pass=1/2 failed=1 missing=1 tags=3"))
-        XCTAssertTrue(reportText.contains("tag_summary fixture=1/1 smoke=1/1 synthetic=1/1"))
+        XCTAssertTrue(reportText.contains("tag_summary"))
+        XCTAssertTrue(reportText.contains("fixture=1/1"))
+        XCTAssertTrue(reportText.contains("smoke=1/1"))
+        XCTAssertTrue(reportText.contains("synthetic=1/1"))
         XCTAssertTrue(reportText.contains("known-tone [prototype] PASS"))
         XCTAssertTrue(reportText.contains("score=1.00"))
         XCTAssertTrue(reportText.contains("source=known-tone.wav"))

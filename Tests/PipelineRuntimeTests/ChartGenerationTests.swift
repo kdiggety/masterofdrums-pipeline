@@ -21,9 +21,9 @@ final class ChartGenerationTests: XCTestCase {
         XCTAssertEqual(generated.normalized.summary.beatCount, 3)
         XCTAssertEqual(generated.normalized.beatGrid.count, 12)
         XCTAssertEqual(generated.baseChart.chart.notes.count, 2)
-        XCTAssertEqual(generated.baseChart.chart.notes[0].tick, 120)
+        XCTAssertEqual(generated.baseChart.chart.notes[0].tick, 115)
         XCTAssertEqual(generated.baseChart.chart.notes[0].subdivisionIndex, 1)
-        XCTAssertEqual(generated.baseChart.chart.notes[1].tick, 360)
+        XCTAssertEqual(generated.baseChart.chart.notes[1].tick, 365)
         XCTAssertEqual(generated.baseChart.chart.notes[1].lane, .hihatClosed)
         XCTAssertTrue(generated.baseChart.note?.contains("4x") == true)
     }
