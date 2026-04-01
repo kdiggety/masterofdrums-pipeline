@@ -167,10 +167,15 @@ final class PipelineRuntimeFixtureTests: XCTestCase {
         XCTAssertEqual(corpusReport.results.count, 1)
 
         let reportText = corpusReport.renderText()
-        XCTAssertTrue(reportText.contains("corpus pass=1/2 failed=1 missing=1"))
+        XCTAssertTrue(reportText.contains("corpus pass=1/2 failed=1 missing=1 tags=3"))
+        XCTAssertTrue(reportText.contains("tag_summary fixture=1/1 smoke=1/1 synthetic=1/1"))
         XCTAssertTrue(reportText.contains("known-tone [prototype] PASS"))
         XCTAssertTrue(reportText.contains("score=1.00"))
+        XCTAssertTrue(reportText.contains("source=known-tone.wav"))
+        XCTAssertTrue(reportText.contains("source_type=fixture_audio"))
+        XCTAssertTrue(reportText.contains("review=synthetic_smoke"))
         XCTAssertTrue(reportText.contains("lane_usage"))
+        XCTAssertTrue(reportText.contains("measure_density m0=2"))
         XCTAssertTrue(reportText.contains("kick=1"))
         XCTAssertTrue(reportText.contains("snare=1"))
         XCTAssertTrue(reportText.contains("note_preview"))
@@ -268,12 +273,56 @@ final class PipelineRuntimeFixtureTests: XCTestCase {
         try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tempRoot) }
 
-        let analyzerCommand = #"""
-        test -f {input} >/dev/null
-        cat > {output} <<'JSON'
-        {"result":{"timing":{"beats":[{"time":0.25},{"time":0.75},{"time":1.25},{"time":1.75},{"time":2.25}],"downbeats":[0.25,2.25]},"drums":{"hits":[{"id":"evt-1","time_seconds":0.24,"instrument":"bass drum","velocity":0.98,"probability":0.91},{"id":"evt-2","time_seconds":0.76,"class":"snare","strength":0.77,"score":0.82},{"id":"evt-3","start_seconds":1.74,"type":"closed hi hat","amplitude":0.55,"confidence":0.7}]},"analysis":{"audioTrackCount":1,"confidence":0.95,"durationSeconds":2.3,"estimatedSegmentCount":1,"estimatedTempoBPM":120.0}},"note":"wrapped analyzer output","warnings":[]}
-        JSON
-        """#
+        let backendScript = tempRoot.appendingPathComponent("backend-analyzer.py")
+        try #"""
+import json
+import os
+import pathlib
+
+output_path = pathlib.Path(os.environ["PIPELINE_ANALYZER_OUTPUT_PATH"])
+payload = {
+    "result": {
+        "timing": {
+            "beats": [{"time": 0.25}, {"time": 0.75}, {"time": 1.25}, {"time": 1.75}, {"time": 2.25}],
+            "downbeats": [0.25, 2.25]
+        },
+        "drums": {
+            "hits": [
+                {"id": "evt-1", "time_seconds": 0.24, "instrument": "bass drum", "velocity": 0.98, "probability": 0.91},
+                {"id": "evt-2", "time_seconds": 0.76, "class": "snare", "strength": 0.77, "score": 0.82},
+                {"id": "evt-3", "start_seconds": 1.74, "type": "closed hi hat", "amplitude": 0.55, "confidence": 0.7}
+            ]
+        },
+        "analysis": {
+            "audioTrackCount": 1,
+            "confidence": 0.95,
+            "durationSeconds": 2.3,
+            "estimatedSegmentCount": 1,
+            "estimatedTempoBPM": 120.0,
+            "note": "nested analysis note"
+        },
+        "segments": [
+            {"segment_index": 0, "start": 0.0, "end": 2.3, "name": "full_track", "score": 0.97}
+        ]
+    },
+    "warnings": ["backend-warning"],
+    "runtime": {
+        "warnings": ["runtime-warning"],
+        "sourceType": os.environ.get("PIPELINE_ANALYZER_SOURCE_TYPE"),
+        "schemaURI": os.environ.get("PIPELINE_ANALYZER_CONTRACT_SCHEMA_URI")
+    }
+}
+output_path.write_text(json.dumps(payload), encoding="utf-8")
+"""#.write(to: backendScript, atomically: true, encoding: .utf8)
+
+        let wrapperPath = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("scripts", isDirectory: true)
+            .appendingPathComponent("analyzer-wrapper.py")
+            .path
+        let analyzerCommand = "python3 \(shellQuote(wrapperPath)) --input {input} --output {output} --backend-command \(shellQuote("python3 \(backendScript.path)"))"
         let runtime = makeRuntime(
             databasePath: tempRoot.appendingPathComponent("pipeline.sqlite").path,
             artifactRoot: tempRoot.appendingPathComponent("artifacts", isDirectory: true).path,
@@ -293,6 +342,15 @@ final class PipelineRuntimeFixtureTests: XCTestCase {
         let jobs = try await runtime.jobs.list(status: nil)
         let ingestJob = try XCTUnwrap(jobs.first(where: { $0.type == .audioIngest }))
         let artifacts = try await runtime.artifacts.list(workflowID: ingestJob.workflowID, jobID: nil, limit: 10)
+
+        let analyzeJob = try XCTUnwrap(jobs.first(where: { $0.type == .audioAnalyze }))
+        let analysisResult = try decode(AudioAnalysisContract.self, from: analyzeJob.resultJSON)
+        XCTAssertEqual(analysisResult.analysis.audioTrackCount, 1)
+        XCTAssertEqual(analysisResult.segments.first?.label, "full_track")
+        XCTAssertEqual(analysisResult.note, "nested analysis note")
+        XCTAssertTrue(analysisResult.warnings.contains("backend-warning"))
+        XCTAssertTrue(analysisResult.warnings.contains("runtime-warning"))
+        XCTAssertNotNil(analysisResult.rawAnalyzerOutput)
 
         let normalizedArtifact = try XCTUnwrap(artifacts.first(where: { $0.artifactType == "normalized_analysis" }))
         let normalizedArtifactURL = try XCTUnwrap(URL(string: normalizedArtifact.uri))
@@ -345,5 +403,9 @@ final class PipelineRuntimeFixtureTests: XCTestCase {
     private func fileSize(at url: URL) -> Int {
         let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
         return (attributes?[.size] as? NSNumber)?.intValue ?? 0
+    }
+
+    private func shellQuote(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 }

@@ -1,12 +1,19 @@
 {
-  "schemaVersion": "1.1.0",
+  "schemaVersion": "1.2.0",
   "songs": [
     {
       "id": "known-tone",
       "title": "Known Tone Fixture",
       "artist": "Test Fixture",
       "sourceFixture": "known-tone.wav",
+      "sourceType": "fixture_audio",
+      "clipDurationSeconds": 1.0,
+      "reviewStatus": "synthetic_smoke",
       "notes": "Synthetic fixture corpus entry used to exercise real runtime chart generation plus regression-friendly reporting.",
+      "reviewNotes": [
+        "Replace with real isolated drum clips once licensing and storage path are settled.",
+        "Keep prototype expectation tight so CI catches structural drift before musical review."
+      ],
       "tags": ["synthetic", "fixture", "smoke"],
       "expectations": [
         {

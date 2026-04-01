@@ -50,6 +50,29 @@ final class ChartGenerationTests: XCTestCase {
         XCTAssertTrue(generated.normalized.note?.contains("3x") == true)
     }
 
+    func testGenerateUsesExplicitAnalyzerSubdivisionAnchorsForBeatGridAndTicks() throws {
+        let analysis = makeAnalysis(raw: [
+            "beats": [0.0, 0.5],
+            "subdivisions": [0.0, 0.18, 0.31, 0.5, 0.68, 0.84],
+            "drumEvents": [
+                ["eventID": "kick-1", "label": "kick", "onsetSeconds": 0.18, "velocity": 1.0],
+                ["eventID": "snare-1", "label": "snare", "onsetSeconds": 0.84, "velocity": 0.8]
+            ]
+        ], duration: 1.0)
+
+        let generated = ChartGenerator.generate(
+            from: analysis,
+            generatedAt: Date(timeIntervalSince1970: 0),
+            normalizedAnalysisArtifactURI: "file:///tmp/normalized.json"
+        )
+
+        XCTAssertEqual(generated.normalized.beatGrid.count, 6)
+        XCTAssertEqual(generated.normalized.beatGrid[1].startSeconds, 0.18, accuracy: 0.0001)
+        XCTAssertEqual(generated.normalized.beatGrid[2].startSeconds, 0.31, accuracy: 0.0001)
+        XCTAssertEqual(generated.baseChart.chart.notes.map(\.tick), [173, 806])
+        XCTAssertEqual(generated.baseChart.chart.notes.map(\.subdivisionIndex), [1, 5])
+    }
+
     func testGenerateWarnsWhenCandidatesAreDroppedAndMapsLaneAliases() throws {
         let analysis = makeAnalysis(raw: [
             "beats": [0.0, 0.5],

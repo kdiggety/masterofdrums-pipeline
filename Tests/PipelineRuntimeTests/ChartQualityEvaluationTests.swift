@@ -7,12 +7,16 @@ final class ChartQualityEvaluationTests: XCTestCase {
         let data = try Data(contentsOf: url)
         let corpus = try JSONDecoder().decode(ChartEvaluationCorpus.self, from: data)
 
-        XCTAssertEqual(corpus.schemaVersion, "1.1.0")
+        XCTAssertEqual(corpus.schemaVersion, "1.2.0")
         XCTAssertEqual(corpus.songs.count, 1)
 
         let song = try XCTUnwrap(corpus.songs.first)
         XCTAssertEqual(song.id, "known-tone")
         XCTAssertEqual(song.sourceFixture, "known-tone.wav")
+        XCTAssertEqual(song.sourceType, "fixture_audio")
+        XCTAssertEqual(try XCTUnwrap(song.clipDurationSeconds), 1.0, accuracy: 0.0001)
+        XCTAssertEqual(song.reviewStatus, "synthetic_smoke")
+        XCTAssertEqual(song.reviewNotes.count, 2)
         XCTAssertEqual(song.tags, ["synthetic", "fixture", "smoke"])
         XCTAssertEqual(song.expectations.count, 2)
 
@@ -68,11 +72,14 @@ final class ChartQualityEvaluationTests: XCTestCase {
         XCTAssertEqual(report.metrics.emptyMeasureCount, 0)
         XCTAssertEqual(report.metrics.averageNotesPerMeasure, 3.0, accuracy: 0.0001)
         XCTAssertEqual(report.metrics.laneUsage.count, 3)
+        XCTAssertEqual(report.metrics.measureDensity.map(\.noteCount), [3])
         XCTAssertEqual(report.score, 1.0, accuracy: 0.0001)
         XCTAssertEqual(report.regressionSnapshot.notePreview.count, 3)
         XCTAssertEqual(report.regressionSnapshot.notePreview.first, "tick=0:beat=0:sub=nil:lane=kick:vel=nil")
+        XCTAssertEqual(report.regressionSnapshot.measureDensity.map(\.noteCount), [3])
         XCTAssertTrue(report.summary.contains("PASS"))
         XCTAssertTrue(report.regressionSummary.contains("note_preview"))
+        XCTAssertTrue(report.regressionSummary.contains("measure_density m0=3"))
     }
 
     func testEvaluatorFlagsOverchartedUnexpectedLaneAndChording() {
@@ -110,6 +117,7 @@ final class ChartQualityEvaluationTests: XCTestCase {
         XCTAssertEqual(report.metrics.maxNotesPerBeat, 5)
         XCTAssertEqual(report.metrics.maxNotesPerMeasure, 5)
         XCTAssertEqual(report.metrics.emptyMeasureCount, 1)
+        XCTAssertEqual(report.metrics.measureDensity.map(\.noteCount), [5, 0])
 
         let codes = Set(report.issues.map(\.code))
         XCTAssertTrue(codes.contains("difficulty_mismatch"))
@@ -152,6 +160,7 @@ final class ChartQualityEvaluationTests: XCTestCase {
         XCTAssertTrue(codes.contains("score_below_threshold"))
         XCTAssertEqual(report.metrics.emptyMeasureCount, 1)
         XCTAssertEqual(report.metrics.maxNotesPerMeasure, 0)
+        XCTAssertEqual(report.metrics.measureDensity.map(\.noteCount), [0])
         XCTAssertEqual(report.metrics.averageNotesPerMeasure, 0.0, accuracy: 0.0001)
         XCTAssertEqual(report.score, 0.0, accuracy: 0.0001)
     }
@@ -163,6 +172,11 @@ final class ChartQualityEvaluationTests: XCTestCase {
                     id: "fixture-song",
                     title: "Fixture Song",
                     sourceFixture: "fixture.wav",
+                    sourceType: "fixture_audio",
+                    clipDurationSeconds: 1.0,
+                    reviewStatus: "ready_for_regression",
+                    reviewNotes: ["Human-review baseline once real clip arrives."],
+                    tags: ["smoke", "fixture"],
                     expectations: [
                         ChartQualityExpectation(
                             difficulty: "prototype",
@@ -202,11 +216,18 @@ final class ChartQualityEvaluationTests: XCTestCase {
         XCTAssertEqual(report.passedExpectations, 1)
         XCTAssertEqual(report.failedExpectations, 0)
         XCTAssertEqual(report.results.count, 1)
+        XCTAssertEqual(report.tagSummaries.map(\.tag), ["fixture", "smoke"])
+        XCTAssertEqual(report.tagSummaries.map(\.passedExpectations), [1, 1])
 
         let text = report.renderText()
-        XCTAssertTrue(text.contains("corpus pass=1/1 failed=0 missing=0"))
+        XCTAssertTrue(text.contains("corpus pass=1/1 failed=0 missing=0 tags=2"))
+        XCTAssertTrue(text.contains("tag_summary fixture=1/1 smoke=1/1"))
         XCTAssertTrue(text.contains("fixture-song [prototype] PASS prototype score=1.00"))
+        XCTAssertTrue(text.contains("source=fixture.wav"))
+        XCTAssertTrue(text.contains("source_type=fixture_audio"))
+        XCTAssertTrue(text.contains("review=ready_for_regression"))
         XCTAssertTrue(text.contains("lane_usage kick=1 snare=1"))
+        XCTAssertTrue(text.contains("measure_density m0=2"))
         XCTAssertTrue(text.contains("tick=0:beat=0:sub=0:lane=kick:vel=1.00"))
         XCTAssertTrue(text.contains("tick=480:beat=1:sub=4:lane=snare:vel=0.70"))
     }

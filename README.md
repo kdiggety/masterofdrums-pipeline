@@ -142,7 +142,7 @@ Still to implement:
 - richer analyzer outputs that include beat/downbeat arrays and lane-level drum-event candidates
 - downstream chart validation/export built on the normalized chart-generation artifacts
 - broader fixture/integration coverage beyond the single known WAV path
-- a runnable corpus-driven quality loop that scores generated charts against song expectations
+- a dedicated CLI surface for corpus evaluation/report export; the quality loop exists in tests/domain code but is not yet an operator-facing command
 
 ## Current Testable Slice
 
@@ -158,6 +158,8 @@ Example flow:
 
 ```bash
 export PIPELINE_AUDIO_ANALYZER_COMMAND="python3 ./scripts/analyzer-wrapper.py --input {input} --output {output} --probe-only"
+# or delegate through the wrapper to a real backend command
+# export PIPELINE_AUDIO_ANALYZER_COMMAND="python3 ./scripts/analyzer-wrapper.py --input {input} --output {output} --backend-command 'python3 /opt/mod/backend-analyzer.py --in {input} --out {output}'"
 export PIPELINE_AUDIO_ANALYZER_TIMEOUT_SECONDS=300
 
 swift run MasterOfDrumsPipeline init-db
@@ -190,4 +192,4 @@ Treat that as a transitional deployment shape until the pipeline moves to a netw
 
 Note: this assumes Swift and SQLite development libraries are available on the machine.
 
-See `Docs/architecture/standalone-pipeline-plan.md`, `Docs/database/sqlite-schema.md`, `Docs/interfaces/cli-interface-outline.md`, `Docs/interfaces/audio-analysis-contract.md`, `Docs/interfaces/chart-generation-analyzer-stack.md`, `Docs/interfaces/chart-generation-contract.md`, and `Docs/quality/chart-quality-evaluation.md`.
+See `Docs/architecture/standalone-pipeline-plan.md`, `Docs/database/sqlite-schema.md`, `Docs/interfaces/cli-interface-outline.md`, `Docs/interfaces/audio-analysis-contract.md`, `Docs/interfaces/chart-generation-analyzer-stack.md`, `Docs/interfaces/chart-generation-contract.md`, and `Docs/quality/chart-quality-evaluation.md` for the current corpus/reporting scaffolding and the gap to a real CLI-driven evaluation loop.

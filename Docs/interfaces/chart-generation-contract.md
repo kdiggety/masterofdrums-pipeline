@@ -242,7 +242,7 @@ This proposal is backed by:
 - `Sources/PipelineRuntime/PipelineRuntime.swift`
 
 The runtime now produces `normalized_analysis` and `base_chart` artifacts during `chart_generate`.
-For the current slice, it prefers richer analyzer output when present (beat arrays / drum-event candidates inside `rawAnalyzerOutput`) and otherwise falls back to a deterministic tempo-derived beat grid so downstream validation/export can start against stable artifacts now.
+For the current slice, it prefers richer analyzer output when present (beat arrays, optional subdivision/tatum anchors, and drum-event candidates inside `rawAnalyzerOutput`) and otherwise falls back to a deterministic tempo-derived beat grid so downstream validation/export can start against stable artifacts now.
 
 ## Recommended next implementation step
 

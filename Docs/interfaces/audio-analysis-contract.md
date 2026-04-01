@@ -75,8 +75,11 @@ The runtime injects these environment variables into the analyzer process so wra
 - `PIPELINE_ANALYZER_OUTPUT_PATH`
 - `PIPELINE_ANALYZER_WORKFLOW_ID`
 - `PIPELINE_ANALYZER_JOB_ID`
+- `PIPELINE_ANALYZER_SOURCE_TYPE`
 - `PIPELINE_ANALYZER_SOURCE_URI`
 - `PIPELINE_ANALYZER_REQUESTED_BY`
+- `PIPELINE_ANALYZER_CONTRACT_SCHEMA_URI`
+- `PIPELINE_ANALYZER_CONTRACT_SCHEMA_VERSION`
 
 Preferred: emit the full pipeline contract directly.
 
@@ -96,6 +99,7 @@ For chart-generation normalization, looser wrapper outputs are also accepted whe
 
 - beat arrays at `beats`, `beatTimes`, `beat_times`, or nested under `timing.*`
 - downbeat arrays at `downbeats`, `downbeatTimes`, `downbeat_times`, or nested under `timing.*`
+- subdivision/tatum arrays at `subdivisions`, `subdivisionTimes`, `subdivision_times`, `tatums`, `tatumTimes`, `tatum_times`, or nested under `timing.*`
 - drum-event arrays at `drumEvents`, `drum_events`, `events`, `hits`, `notes`, or nested under `drums.*` / `percussion.*`
 - wrapper containers like `result`, `output`, `payload`, or `data`
 
@@ -106,5 +110,8 @@ The worker will wrap that output into the stable contract, and downstream chart 
 - Analyzer invocation currently uses `/bin/bash -lc`, so quoting and command safety depend on the configured template.
 - Timeout enforcement currently terminates the shell process; wrappers that spawn detached children should clean those up explicitly.
 - Stdout fallback is useful for simple wrappers/tests, but file output remains the preferred production path.
+- The worker assumes file-based artifact persistence, not object storage.
+- Downstream consumers should read the artifact at `uri`; `metadata_json` is only a summary.
+mple wrappers/tests, but file output remains the preferred production path.
 - The worker assumes file-based artifact persistence, not object storage.
 - Downstream consumers should read the artifact at `uri`; `metadata_json` is only a summary.

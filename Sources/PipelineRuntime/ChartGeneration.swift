@@ -47,7 +47,7 @@ enum ChartGenerator {
                 : "Heuristic normalization generated from coarse analysis summary with \(detectedSubdivisionCount)x fallback subdivision anchors per beat."
         )
 
-        let notes = makeChartNotes(from: drumEvents, ticksPerBeat: ticksPerBeat, subdivisionsPerBeat: detectedSubdivisionCount)
+        let notes = makeChartNotes(from: drumEvents, ticksPerBeat: ticksPerBeat, beatGrid: beatGrid)
         let lanes = Array(Set(notes.map(\.lane))).sorted { $0.rawValue < $1.rawValue }
         let baseChart = BaseChartContract(
             source: BaseChartSource(
@@ -128,6 +128,7 @@ enum ChartGenerator {
                 ?? fallbackSubdivisionsPerBeat
             return beatGridFromBeatStarts(
                 sortedBeatStarts,
+                subdivisionStarts: extractSubdivisionStarts(from: analysis.rawAnalyzerOutput) ?? [],
                 downbeatStarts: extractDownbeatStarts(from: analysis.rawAnalyzerOutput) ?? [],
                 tempoBPM: analysis.analysis.estimatedTempoBPM,
                 confidence: analysis.analysis.confidence,
@@ -180,6 +181,7 @@ enum ChartGenerator {
 
     private static func beatGridFromBeatStarts(
         _ beatStarts: [Double],
+        subdivisionStarts: [Double],
         downbeatStarts: [Double],
         tempoBPM: Double?,
         confidence: Double?,
@@ -190,10 +192,12 @@ enum ChartGenerator {
         let usableSubdivisions = max(1, min(subdivisionsPerBeat, 8))
         let estimatedFinalBeatDuration = estimateFinalBeatDuration(from: beatStarts, tempoBPM: tempoBPM)
         let normalizedDownbeats = normalizeStarts(downbeatStarts)
+        let normalizedSubdivisionStarts = normalizeStarts(subdivisionStarts)
         var beatGrid: [BeatGridEvent] = []
         beatGrid.reserveCapacity(beatStarts.count * usableSubdivisions)
         var currentBarIndex = -1
         var currentBeatInBar = timeSignature.numerator
+        var absoluteSubdivisionIndex = 0
 
         for (beatIndex, startSeconds) in beatStarts.enumerated() {
             let nextStart = beatIndex + 1 < beatStarts.count ? beatStarts[beatIndex + 1] : startSeconds + estimatedFinalBeatDuration
@@ -216,16 +220,26 @@ enum ChartGenerator {
             let barIndex = max(currentBarIndex, 0)
             let beatInBar = max(currentBeatInBar, 1)
 
-            for subdivisionInBeat in 0..<usableSubdivisions {
-                let subdivisionIndex = beatIndex * usableSubdivisions + subdivisionInBeat
-                let slotStart = startSeconds + Double(subdivisionInBeat) / Double(usableSubdivisions) * beatDuration
-                let slotEnd = startSeconds + Double(subdivisionInBeat + 1) / Double(usableSubdivisions) * beatDuration
+            let explicitInteriorStarts = normalizedSubdivisionStarts.filter {
+                $0 > startSeconds + 0.0005 && $0 < nextStart - 0.0005
+            }
+            let anchorStarts: [Double]
+            if explicitInteriorStarts.isEmpty {
+                anchorStarts = (0..<usableSubdivisions).map {
+                    startSeconds + Double($0) / Double(usableSubdivisions) * beatDuration
+                }
+            } else {
+                anchorStarts = [startSeconds] + explicitInteriorStarts
+            }
+
+            for (subdivisionInBeat, slotStart) in anchorStarts.enumerated() {
+                let slotEnd = subdivisionInBeat + 1 < anchorStarts.count ? anchorStarts[subdivisionInBeat + 1] : nextStart
                 beatGrid.append(
                     BeatGridEvent(
                         beatIndex: beatIndex,
                         barIndex: barIndex,
                         beatInBar: beatInBar,
-                        subdivisionIndex: subdivisionIndex,
+                        subdivisionIndex: absoluteSubdivisionIndex,
                         subdivisionInBeat: subdivisionInBeat,
                         startSeconds: slotStart,
                         durationSeconds: max(slotEnd - slotStart, 0),
@@ -235,6 +249,7 @@ enum ChartGenerator {
                         confidence: confidence
                     )
                 )
+                absoluteSubdivisionIndex += 1
             }
         }
 
@@ -422,16 +437,18 @@ enum ChartGenerator {
         }
     }
 
-    private static func makeChartNotes(from drumEvents: [DetectedDrumEvent], ticksPerBeat: Int, subdivisionsPerBeat: Int) -> [BaseChartNote] {
-        let ticksPerSubdivision = max(ticksPerBeat / max(subdivisionsPerBeat, 1), 1)
+    private static func makeChartNotes(from drumEvents: [DetectedDrumEvent], ticksPerBeat: Int, beatGrid: [BeatGridEvent]) -> [BaseChartNote] {
+        let anchorsBySubdivisionIndex = Dictionary(uniqueKeysWithValues: beatGrid.map { ($0.subdivisionIndex, $0) })
+        let anchorsByBeatIndex = Dictionary(grouping: beatGrid, by: \.beatIndex).mapValues { $0.sorted { $0.startSeconds < $1.startSeconds } }
+
         return drumEvents.map { event in
             let beatIndex = event.onsetBeatIndex ?? 0
-            let tick: Int
-            if let subdivisionIndex = event.onsetSubdivisionIndex {
-                tick = subdivisionIndex * ticksPerSubdivision
-            } else {
-                tick = beatIndex * ticksPerBeat
-            }
+            let tick = chartTick(
+                for: event,
+                ticksPerBeat: ticksPerBeat,
+                anchorsBySubdivisionIndex: anchorsBySubdivisionIndex,
+                anchorsByBeatIndex: anchorsByBeatIndex
+            )
             return BaseChartNote(
                 lane: event.lane,
                 tick: tick,
@@ -443,6 +460,31 @@ enum ChartGenerator {
                 sourceEventID: event.eventID
             )
         }
+    }
+
+    private static func chartTick(
+        for event: DetectedDrumEvent,
+        ticksPerBeat: Int,
+        anchorsBySubdivisionIndex: [Int: BeatGridEvent],
+        anchorsByBeatIndex: [Int: [BeatGridEvent]]
+    ) -> Int {
+        let beatIndex = event.onsetBeatIndex ?? 0
+        guard
+            let subdivisionIndex = event.onsetSubdivisionIndex,
+            let anchor = anchorsBySubdivisionIndex[subdivisionIndex],
+            let beatAnchors = anchorsByBeatIndex[anchor.beatIndex],
+            let beatStart = beatAnchors.first?.startSeconds
+        else {
+            return beatIndex * ticksPerBeat
+        }
+
+        let beatEnd = beatAnchors.last.flatMap { lastAnchor in
+            lastAnchor.durationSeconds.map { lastAnchor.startSeconds + $0 }
+        } ?? (beatStart + 60.0 / 120.0)
+        let beatDuration = max(beatEnd - beatStart, 0.0001)
+        let relative = min(max((event.onsetSeconds - beatStart) / beatDuration, 0), 0.999)
+        let offsetTicks = Int((relative * Double(ticksPerBeat)).rounded())
+        return beatIndex * ticksPerBeat + offsetTicks
     }
 
     private static func nearestAnchor(to onsetSeconds: Double, beatGrid: [BeatGridEvent]) -> BeatGridEvent? {
@@ -476,6 +518,30 @@ enum ChartGenerator {
                 root["timing"]?.dictionary?["downbeats"],
                 root["timing"]?.dictionary?["downbeatTimes"],
                 root["timing"]?.dictionary?["downbeat_times"]
+            ]
+            for candidate in candidates {
+                let values = extractTimingValues(from: candidate)
+                if !values.isEmpty { return normalizeStarts(values) }
+            }
+        }
+        return nil
+    }
+
+    private static func extractSubdivisionStarts(from raw: RawJSONValue?) -> [Double]? {
+        for root in candidateRootObjects(from: raw) {
+            let candidates: [RawJSONValue?] = [
+                root["subdivisions"],
+                root["subdivisionTimes"],
+                root["subdivision_times"],
+                root["tatums"],
+                root["tatumTimes"],
+                root["tatum_times"],
+                root["timing"]?.dictionary?["subdivisions"],
+                root["timing"]?.dictionary?["subdivisionTimes"],
+                root["timing"]?.dictionary?["subdivision_times"],
+                root["timing"]?.dictionary?["tatums"],
+                root["timing"]?.dictionary?["tatumTimes"],
+                root["timing"]?.dictionary?["tatum_times"]
             ]
             for candidate in candidates {
                 let values = extractTimingValues(from: candidate)

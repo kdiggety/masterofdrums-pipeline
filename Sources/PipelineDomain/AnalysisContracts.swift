@@ -65,19 +65,29 @@ public struct AudioAnalysisContract: Codable, Sendable {
     ) -> AudioAnalysisContract {
         let raw = RawJSONValue.from(object)
         let dict = object as? [String: Any]
-        let analysisDict = dict?["analysis"] as? [String: Any]
-        let segments = (dict?["segments"] as? [[String: Any]])?.enumerated().map { index, item in
-            AudioAnalysisSegment(
-                index: (item["index"] as? Int) ?? index,
-                startSeconds: double(item["startSeconds"] ?? item["start_seconds"]),
-                endSeconds: double(item["endSeconds"] ?? item["end_seconds"]),
-                label: item["label"] as? String,
-                confidence: double(item["confidence"])
+        let root = dict ?? [:]
+        let payload = unwrapPayload(dict)
+        let analysisDict = firstDictionary(in: payload, keys: ["analysis"]) ?? [:]
+        let segmentsSource = firstArray(in: payload, keys: ["segments", "sections"]) ?? []
+        let segments = segmentsSource.enumerated().compactMap { index, item -> AudioAnalysisSegment? in
+            guard let item else { return nil }
+            return AudioAnalysisSegment(
+                index: int(item["index"] ?? item["segmentIndex"] ?? item["segment_index"]) ?? index,
+                startSeconds: double(item["startSeconds"] ?? item["start_seconds"] ?? item["start"] ?? item["beginSeconds"] ?? item["begin_seconds"]),
+                endSeconds: double(item["endSeconds"] ?? item["end_seconds"] ?? item["end"] ?? item["stopSeconds"] ?? item["stop_seconds"]),
+                label: string(item["label"] ?? item["name"] ?? item["type"]),
+                confidence: double(item["confidence"] ?? item["score"])
             )
-        } ?? []
-        let duration = double(analysisDict?["durationSeconds"] ?? analysisDict?["duration_seconds"] ?? dict?["durationSeconds"] ?? dict?["duration_seconds"])
-        let segmentCount = (analysisDict?["estimatedSegmentCount"] as? Int) ?? (analysisDict?["estimated_segment_count"] as? Int) ?? segments.count
-        let trackCount = (analysisDict?["audioTrackCount"] as? Int) ?? (analysisDict?["audio_track_count"] as? Int) ?? 0
+        }
+        let duration = double(firstValue(in: analysisDict, keys: ["durationSeconds", "duration_seconds", "duration"]) ?? firstValue(in: payload, keys: ["durationSeconds", "duration_seconds", "duration"]))
+        let segmentCount = int(firstValue(in: analysisDict, keys: ["estimatedSegmentCount", "estimated_segment_count", "segmentCount", "segment_count"]))
+            ?? int(firstValue(in: payload, keys: ["estimatedSegmentCount", "estimated_segment_count", "segmentCount", "segment_count"]))
+            ?? segments.count
+        let trackCount = int(firstValue(in: analysisDict, keys: ["audioTrackCount", "audio_track_count", "trackCount", "track_count"]))
+            ?? int(firstValue(in: payload, keys: ["audioTrackCount", "audio_track_count", "trackCount", "track_count"]))
+            ?? 0
+        let warnings = uniqueStrings(extractWarnings(from: root) + extractWarnings(from: payload))
+        let note = extractNote(from: payload) ?? extractNote(from: root)
 
         return AudioAnalysisContract(
             source: AudioAnalysisSource(sourceType: sourceType, sourceURI: sourceURI, requestedBy: requestedBy),
@@ -86,15 +96,15 @@ public struct AudioAnalysisContract: Codable, Sendable {
                 durationSeconds: duration,
                 audioTrackCount: trackCount,
                 estimatedSegmentCount: segmentCount,
-                estimatedTempoBPM: double(analysisDict?["estimatedTempoBPM"] ?? analysisDict?["estimated_tempo_bpm"] ?? dict?["estimatedTempoBPM"] ?? dict?["estimated_tempo_bpm"]),
-                downbeatOffsetSeconds: double(analysisDict?["downbeatOffsetSeconds"] ?? analysisDict?["downbeat_offset_seconds"] ?? dict?["downbeatOffsetSeconds"] ?? dict?["downbeat_offset_seconds"]),
-                confidence: double(analysisDict?["confidence"] ?? dict?["confidence"]),
+                estimatedTempoBPM: double(firstValue(in: analysisDict, keys: ["estimatedTempoBPM", "estimated_tempo_bpm", "tempoBPM", "tempo_bpm"]) ?? firstValue(in: payload, keys: ["estimatedTempoBPM", "estimated_tempo_bpm", "tempoBPM", "tempo_bpm"])),
+                downbeatOffsetSeconds: double(firstValue(in: analysisDict, keys: ["downbeatOffsetSeconds", "downbeat_offset_seconds"]) ?? firstValue(in: payload, keys: ["downbeatOffsetSeconds", "downbeat_offset_seconds"])),
+                confidence: double(firstValue(in: analysisDict, keys: ["confidence", "score"]) ?? firstValue(in: payload, keys: ["confidence", "score"])),
                 artifactURI: nil,
                 analyzerCommand: commandTemplate
             ),
             segments: segments,
-            warnings: dict?["warnings"] as? [String] ?? [],
-            note: dict?["note"] as? String,
+            warnings: warnings,
+            note: note,
             rawAnalyzerOutput: raw
         )
     }
@@ -203,16 +213,125 @@ public enum RawJSONValue: Codable, Sendable {
     }
 }
 
+private func unwrapPayload(_ dict: [String: Any]?) -> [String: Any] {
+    guard let dict else { return [:] }
+    var current = dict
+    let containerKeys = ["result", "output", "payload", "data"]
+    while let nested = firstDictionary(in: current, keys: containerKeys) {
+        current = nested
+    }
+    return current
+}
+
+private func firstDictionary(in dict: [String: Any], keys: [String]) -> [String: Any]? {
+    for key in keys {
+        if let value = dict[key] as? [String: Any] {
+            return value
+        }
+    }
+    return nil
+}
+
+private func firstArray(in dict: [String: Any], keys: [String]) -> [[String: Any]?]? {
+    for key in keys {
+        if let values = dict[key] as? [[String: Any]] {
+            return values.map(Optional.some)
+        }
+        if let values = dict[key] as? [Any] {
+            return values.map { $0 as? [String: Any] }
+        }
+    }
+    return nil
+}
+
+private func firstValue(in dict: [String: Any], keys: [String]) -> Any? {
+    for key in keys {
+        if let value = dict[key] {
+            return value
+        }
+    }
+    return nil
+}
+
+private func extractWarnings(from payload: [String: Any]) -> [String] {
+    let sources = [
+        firstValue(in: payload, keys: ["warnings", "warningMessages", "warning_messages"]),
+        firstValue(in: firstDictionary(in: payload, keys: ["analysis"]) ?? [:], keys: ["warnings", "warningMessages", "warning_messages"]),
+        firstValue(in: firstDictionary(in: payload, keys: ["runtime"]) ?? [:], keys: ["warnings"])
+    ]
+    var warnings: [String] = []
+    for source in sources {
+        switch source {
+        case let values as [String]:
+            warnings.append(contentsOf: values)
+        case let values as [Any]:
+            warnings.append(contentsOf: values.compactMap(string))
+        case let value?:
+            if let warning = string(value) {
+                warnings.append(warning)
+            }
+        default:
+            break
+        }
+    }
+    return warnings
+}
+
+private func extractNote(from payload: [String: Any]) -> String? {
+    if let note = string(firstValue(in: payload, keys: ["note", "message", "summary"])) {
+        return note
+    }
+    if let analysis = firstDictionary(in: payload, keys: ["analysis"]), let note = string(firstValue(in: analysis, keys: ["note", "message", "summary"])) {
+        return note
+    }
+    return nil
+}
+
+private func uniqueStrings(_ values: [String]) -> [String] {
+    var seen = Set<String>()
+    var ordered: [String] = []
+    for value in values where seen.insert(value).inserted {
+        ordered.append(value)
+    }
+    return ordered
+}
+
 private func double(_ value: Any?) -> Double? {
     switch value {
     case let value as Double:
         return value
+    case let value as Float:
+        return Double(value)
     case let value as Int:
         return Double(value)
     case let value as NSNumber:
         return value.doubleValue
     case let value as String:
         return Double(value)
+    default:
+        return nil
+    }
+}
+
+private func int(_ value: Any?) -> Int? {
+    switch value {
+    case let value as Int:
+        return value
+    case let value as NSNumber:
+        return value.intValue
+    case let value as String:
+        return Int(value)
+    default:
+        return nil
+    }
+}
+
+private func string(_ value: Any?) -> String? {
+    switch value {
+    case let value as String:
+        return value
+    case let value as NSString:
+        return value as String
     default:
         return nil
     }
