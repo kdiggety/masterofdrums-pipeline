@@ -1,13 +1,27 @@
 {
-  "schemaVersion": "1.0.0",
+  "schemaVersion": "1.1.0",
   "songs": [
     {
       "id": "known-tone",
       "title": "Known Tone Fixture",
       "artist": "Test Fixture",
       "sourceFixture": "known-tone.wav",
-      "notes": "Minimal smoke-test corpus entry. This is intentionally synthetic and should grow into a small representative song set.",
+      "notes": "Synthetic fixture corpus entry used to exercise real runtime chart generation plus regression-friendly reporting.",
+      "tags": ["synthetic", "fixture", "smoke"],
       "expectations": [
+        {
+          "difficulty": "prototype",
+          "noteCountRange": { "min": 2, "max": 4 },
+          "measureCountRange": { "min": 1, "max": 2 },
+          "requiredLanes": ["kick", "snare"],
+          "allowedLanes": ["kick", "snare", "hihat_closed"],
+          "minDistinctLanes": 2,
+          "maxSimultaneousNotes": 1,
+          "maxNotesPerBeat": 1,
+          "maxNotesPerMeasure": 4,
+          "allowedEmptyMeasures": 0,
+          "minimumScore": 0.9
+        },
         {
           "difficulty": "easy",
           "noteCountRange": { "min": 1, "max": 8 },

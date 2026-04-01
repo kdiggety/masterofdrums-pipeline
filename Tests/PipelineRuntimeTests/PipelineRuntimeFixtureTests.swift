@@ -121,6 +121,162 @@ final class PipelineRuntimeFixtureTests: XCTestCase {
         XCTAssertEqual(persistedBaseChart.chart.notes.count, 2)
     }
 
+    func testGeneratedFixtureChartCanBeEvaluatedThroughCorpusRunner() async throws {
+        let fixtureURL = try XCTUnwrap(Bundle.module.url(forResource: "known-tone", withExtension: "wav"))
+        let corpusURL = try XCTUnwrap(Bundle.module.url(forResource: "chart-eval-corpus", withExtension: "json"))
+        let corpus = try JSONDecoder().decode(ChartEvaluationCorpus.self, from: Data(contentsOf: corpusURL))
+        let tempRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("masterofdrums-pipeline-tests", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+        let runtime = PipelineRuntime(
+            configuration: SQLiteConfiguration(
+                databasePath: tempRoot.appendingPathComponent("pipeline.sqlite").path,
+                artifactRoot: tempRoot.appendingPathComponent("artifacts", isDirectory: true).path,
+                autoMigrate: true
+            )
+        )
+
+        let analyzerCommand = #"""
+        cat > {output} <<'JSON'
+        {"analysis":{"audioTrackCount":1,"confidence":0.99,"downbeatOffsetSeconds":0.0,"durationSeconds":1.0,"estimatedSegmentCount":1,"estimatedTempoBPM":120.0},"beats":[0.0,0.5,1.0],"drumEvents":[{"confidence":0.9,"eventID":"kick-1","label":"kick","onsetSeconds":0.0,"velocity":1.0},{"confidence":0.8,"eventID":"snare-1","label":"snare","onsetSeconds":0.5,"velocity":0.7}],"note":"fixture analyzer output","segments":[{"confidence":0.99,"endSeconds":1.0,"index":0,"label":"full_track","startSeconds":0.0}],"warnings":[]}
+        JSON
+        """#
+        setenv("PIPELINE_AUDIO_ANALYZER_COMMAND", analyzerCommand, 1)
+        defer { unsetenv("PIPELINE_AUDIO_ANALYZER_COMMAND") }
+
+        try await runtime.run(
+            command: .enqueueAudioIngest(
+                sourceURI: fixtureURL.absoluteString,
+                sourceType: "file",
+                requestedBy: "test",
+                idempotencyKey: nil
+            )
+        )
+        try await runtime.run(command: .worker(stopAfterIdlePolls: 1))
+
+        let jobs = try await runtime.jobs.list(status: nil)
+        let ingestJob = try XCTUnwrap(jobs.first(where: { $0.type == .audioIngest }))
+        let artifacts = try await runtime.artifacts.list(workflowID: ingestJob.workflowID, jobID: nil, limit: 10)
+        let baseChartArtifact = try XCTUnwrap(artifacts.first(where: { $0.artifactType == "base_chart" }))
+        let baseChartArtifactURL = try XCTUnwrap(URL(string: baseChartArtifact.uri))
+        let persistedBaseChart = try decode(BaseChartContract.self, from: String(decoding: Data(contentsOf: baseChartArtifactURL), as: UTF8.self))
+
+        let corpusReport = ChartEvaluationRunner.evaluate(
+            corpus: corpus,
+            generatedCharts: ["known-tone": [persistedBaseChart.chart.difficulty: persistedBaseChart]],
+            generatedAt: Date(timeIntervalSince1970: 0)
+        )
+
+        XCTAssertFalse(corpusReport.passed)
+        XCTAssertEqual(corpusReport.totalExpectations, 2)
+        XCTAssertEqual(corpusReport.passedExpectations, 1)
+        XCTAssertEqual(corpusReport.failedExpectations, 1)
+        XCTAssertEqual(corpusReport.missingCharts, ["known-tone:easy"])
+        XCTAssertEqual(corpusReport.results.count, 1)
+
+        let reportText = corpusReport.renderText()
+        XCTAssertTrue(reportText.contains("corpus pass=1/2 failed=1 missing=1"))
+        XCTAssertTrue(reportText.contains("known-tone [prototype] PASS prototype score=1.00"))
+        XCTAssertTrue(reportText.contains("lane_usage kick=1 snare=1"))
+        XCTAssertTrue(reportText.contains("tick=0:beat=0:sub=0:lane=kick:vel=1.00"))
+        XCTAssertTrue(reportText.contains("tick=240:beat=1:sub=2:lane=snare:vel=0.70"))
+        XCTAssertTrue(reportText.contains("missing known-tone:easy"))
+    }
+
+    func testWorkerFallsBackToStdoutJSONWhenEnabled() async throws {
+        let fixtureURL = try XCTUnwrap(Bundle.module.url(forResource: "known-tone", withExtension: "wav"))
+        let tempRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("masterofdrums-pipeline-tests", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+        let runtime = PipelineRuntime(
+            configuration: SQLiteConfiguration(
+                databasePath: tempRoot.appendingPathComponent("pipeline.sqlite").path,
+                artifactRoot: tempRoot.appendingPathComponent("artifacts", isDirectory: true).path,
+                autoMigrate: true
+            )
+        )
+
+        let analyzerCommand = #"""
+        printf '{"analysis":{"audioTrackCount":1,"durationSeconds":1.0,"estimatedSegmentCount":1,"estimatedTempoBPM":120.0},"warnings":["stdout-json"]}'
+        """#
+        setenv("PIPELINE_AUDIO_ANALYZER_COMMAND", analyzerCommand, 1)
+        setenv("PIPELINE_AUDIO_ANALYZER_STDOUT_JSON", "true", 1)
+        defer {
+            unsetenv("PIPELINE_AUDIO_ANALYZER_COMMAND")
+            unsetenv("PIPELINE_AUDIO_ANALYZER_STDOUT_JSON")
+        }
+
+        try await runtime.run(
+            command: .enqueueAudioIngest(
+                sourceURI: fixtureURL.absoluteString,
+                sourceType: "file",
+                requestedBy: "test",
+                idempotencyKey: nil
+            )
+        )
+        try await runtime.run(command: .worker(stopAfterIdlePolls: 1))
+
+        let jobs = try await runtime.jobs.list(status: nil)
+        XCTAssertTrue(jobs.allSatisfy { $0.status == .succeeded })
+
+        let analyzeJob = try XCTUnwrap(jobs.first(where: { $0.type == .audioAnalyze }))
+        let analysisResult = try decode(AudioAnalysisContract.self, from: analyzeJob.resultJSON)
+        XCTAssertEqual(analysisResult.analysis.audioTrackCount, 1)
+        XCTAssertEqual(analysisResult.warnings, ["stdout-json"])
+    }
+
+    func testWorkerPassesPipelineContextEnvironmentIntoAnalyzerProcess() async throws {
+        let fixtureURL = try XCTUnwrap(Bundle.module.url(forResource: "known-tone", withExtension: "wav"))
+        let tempRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("masterofdrums-pipeline-tests", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+        let runtime = PipelineRuntime(
+            configuration: SQLiteConfiguration(
+                databasePath: tempRoot.appendingPathComponent("pipeline.sqlite").path,
+                artifactRoot: tempRoot.appendingPathComponent("artifacts", isDirectory: true).path,
+                autoMigrate: true
+            )
+        )
+
+        let analyzerCommand = #"""
+        cat > {output} <<JSON
+        {"analysis":{"audioTrackCount":1,"durationSeconds":1.0,"estimatedSegmentCount":1},"note":"'$PIPELINE_ANALYZER_WORKFLOW_ID|$PIPELINE_ANALYZER_JOB_ID|$PIPELINE_ANALYZER_REQUESTED_BY|$PIPELINE_ANALYZER_SOURCE_URI|$PIPELINE_ANALYZER_INPUT_PATH|$PIPELINE_ANALYZER_OUTPUT_PATH'"}
+        JSON
+        """#
+        setenv("PIPELINE_AUDIO_ANALYZER_COMMAND", analyzerCommand, 1)
+        defer { unsetenv("PIPELINE_AUDIO_ANALYZER_COMMAND") }
+
+        try await runtime.run(
+            command: .enqueueAudioIngest(
+                sourceURI: fixtureURL.absoluteString,
+                sourceType: "file",
+                requestedBy: "test",
+                idempotencyKey: nil
+            )
+        )
+        try await runtime.run(command: .worker(stopAfterIdlePolls: 1))
+
+        let jobs = try await runtime.jobs.list(status: nil)
+        let analyzeJob = try XCTUnwrap(jobs.first(where: { $0.type == .audioAnalyze }))
+        let analysisResult = try decode(AudioAnalysisContract.self, from: analyzeJob.resultJSON)
+        let note = try XCTUnwrap(analysisResult.note)
+        XCTAssertTrue(note.contains(analyzeJob.workflowID))
+        XCTAssertTrue(note.contains(analyzeJob.id))
+        XCTAssertTrue(note.contains("|test|"))
+        XCTAssertTrue(note.contains(fixtureURL.absoluteString))
+        XCTAssertTrue(note.contains(fixtureURL.path))
+        XCTAssertTrue(note.contains(".json"))
+    }
+
     func testWorkerNormalizesWrappedAnalyzerOutputWithDownbeatsAndMessyEventKeys() async throws {
         let fixtureURL = try XCTUnwrap(Bundle.module.url(forResource: "known-tone", withExtension: "wav"))
         let tempRoot = FileManager.default.temporaryDirectory

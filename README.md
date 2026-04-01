@@ -134,6 +134,7 @@ Implemented so far:
 - domain/application/runtime structure
 - SQLite schema definition and DB-first docs
 - CLI-oriented runtime direction
+- analyzer runtime integration with timeout/stdout-fallback controls and a concrete wrapper example (`scripts/analyzer-wrapper.py`)
 
 Still to implement:
 
@@ -156,6 +157,9 @@ The repo is now aimed at a first testable CLI + SQLite slice:
 Example flow:
 
 ```bash
+export PIPELINE_AUDIO_ANALYZER_COMMAND="python3 ./scripts/analyzer-wrapper.py --input {input} --output {output} --probe-only"
+export PIPELINE_AUDIO_ANALYZER_TIMEOUT_SECONDS=300
+
 swift run MasterOfDrumsPipeline init-db
 swift run MasterOfDrumsPipeline enqueue-audio-ingest --source-uri file:///tmp/test.wav --source-type file --requested-by cli
 swift run MasterOfDrumsPipeline worker --stop-after-idle-polls 2

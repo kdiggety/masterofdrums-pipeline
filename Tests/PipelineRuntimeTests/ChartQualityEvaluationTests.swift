@@ -7,22 +7,29 @@ final class ChartQualityEvaluationTests: XCTestCase {
         let data = try Data(contentsOf: url)
         let corpus = try JSONDecoder().decode(ChartEvaluationCorpus.self, from: data)
 
-        XCTAssertEqual(corpus.schemaVersion, "1.0.0")
+        XCTAssertEqual(corpus.schemaVersion, "1.1.0")
         XCTAssertEqual(corpus.songs.count, 1)
 
         let song = try XCTUnwrap(corpus.songs.first)
         XCTAssertEqual(song.id, "known-tone")
         XCTAssertEqual(song.sourceFixture, "known-tone.wav")
+        XCTAssertEqual(song.tags, ["synthetic", "fixture", "smoke"])
+        XCTAssertEqual(song.expectations.count, 2)
 
-        let expectation = try XCTUnwrap(song.expectations.first)
-        XCTAssertEqual(expectation.difficulty, "easy")
-        XCTAssertEqual(expectation.requiredLanes, [.kick])
-        XCTAssertEqual(expectation.allowedLanes ?? [], [.kick, .snare, .hihatClosed])
-        XCTAssertEqual(expectation.minDistinctLanes, 1)
-        XCTAssertEqual(expectation.maxSimultaneousNotes, 1)
-        XCTAssertEqual(expectation.maxNotesPerMeasure, 8)
-        XCTAssertEqual(expectation.allowedEmptyMeasures, 1)
-        XCTAssertEqual(try XCTUnwrap(expectation.minimumScore), 0.7, accuracy: 0.0001)
+        let prototypeExpectation = try XCTUnwrap(song.expectations.first(where: { $0.difficulty == "prototype" }))
+        XCTAssertEqual(prototypeExpectation.requiredLanes, [.kick, .snare])
+        XCTAssertEqual(prototypeExpectation.allowedLanes ?? [], [.kick, .snare, .hihatClosed])
+        XCTAssertEqual(prototypeExpectation.maxNotesPerBeat, 1)
+        XCTAssertEqual(try XCTUnwrap(prototypeExpectation.minimumScore), 0.9, accuracy: 0.0001)
+
+        let easyExpectation = try XCTUnwrap(song.expectations.first(where: { $0.difficulty == "easy" }))
+        XCTAssertEqual(easyExpectation.requiredLanes, [.kick])
+        XCTAssertEqual(easyExpectation.allowedLanes ?? [], [.kick, .snare, .hihatClosed])
+        XCTAssertEqual(easyExpectation.minDistinctLanes, 1)
+        XCTAssertEqual(easyExpectation.maxSimultaneousNotes, 1)
+        XCTAssertEqual(easyExpectation.maxNotesPerMeasure, 8)
+        XCTAssertEqual(easyExpectation.allowedEmptyMeasures, 1)
+        XCTAssertEqual(try XCTUnwrap(easyExpectation.minimumScore), 0.7, accuracy: 0.0001)
     }
 
     func testEvaluatorPassesChartThatFitsFixtureExpectations() {
@@ -62,7 +69,10 @@ final class ChartQualityEvaluationTests: XCTestCase {
         XCTAssertEqual(report.metrics.averageNotesPerMeasure, 3.0, accuracy: 0.0001)
         XCTAssertEqual(report.metrics.laneUsage.count, 3)
         XCTAssertEqual(report.score, 1.0, accuracy: 0.0001)
+        XCTAssertEqual(report.regressionSnapshot.notePreview.count, 3)
+        XCTAssertEqual(report.regressionSnapshot.notePreview.first, "tick=0:beat=0:sub=nil:lane=kick:vel=nil")
         XCTAssertTrue(report.summary.contains("PASS"))
+        XCTAssertTrue(report.regressionSummary.contains("note_preview"))
     }
 
     func testEvaluatorFlagsOverchartedUnexpectedLaneAndChording() {
@@ -144,6 +154,61 @@ final class ChartQualityEvaluationTests: XCTestCase {
         XCTAssertEqual(report.metrics.maxNotesPerMeasure, 0)
         XCTAssertEqual(report.metrics.averageNotesPerMeasure, 0.0, accuracy: 0.0001)
         XCTAssertEqual(report.score, 0.0, accuracy: 0.0001)
+    }
+
+    func testCorpusRunnerProducesStableRegressionFriendlyTextReport() {
+        let corpus = ChartEvaluationCorpus(
+            songs: [
+                ChartEvaluationSong(
+                    id: "fixture-song",
+                    title: "Fixture Song",
+                    sourceFixture: "fixture.wav",
+                    expectations: [
+                        ChartQualityExpectation(
+                            difficulty: "prototype",
+                            noteCountRange: .init(min: 2, max: 3),
+                            measureCountRange: .init(min: 1, max: 1),
+                            requiredLanes: [.kick, .snare],
+                            allowedLanes: [.kick, .snare],
+                            minDistinctLanes: 2,
+                            maxSimultaneousNotes: 1,
+                            maxNotesPerBeat: 1,
+                            maxNotesPerMeasure: 3,
+                            allowedEmptyMeasures: 0,
+                            minimumScore: 0.9
+                        )
+                    ]
+                )
+            ]
+        )
+
+        let chart = makeChart(
+            difficulty: "prototype",
+            measures: 1,
+            notes: [
+                .init(lane: .kick, tick: 0, beatIndex: 0, subdivisionIndex: 0, startSeconds: 0.0, velocity: 1.0),
+                .init(lane: .snare, tick: 480, beatIndex: 1, subdivisionIndex: 4, startSeconds: 0.5, velocity: 0.7)
+            ]
+        )
+
+        let report = ChartEvaluationRunner.evaluate(
+            corpus: corpus,
+            generatedCharts: ["fixture-song": ["prototype": chart]],
+            generatedAt: Date(timeIntervalSince1970: 0)
+        )
+
+        XCTAssertTrue(report.passed)
+        XCTAssertEqual(report.totalExpectations, 1)
+        XCTAssertEqual(report.passedExpectations, 1)
+        XCTAssertEqual(report.failedExpectations, 0)
+        XCTAssertEqual(report.results.count, 1)
+
+        let text = report.renderText()
+        XCTAssertTrue(text.contains("corpus pass=1/1 failed=0 missing=0"))
+        XCTAssertTrue(text.contains("fixture-song [prototype] PASS prototype score=1.00"))
+        XCTAssertTrue(text.contains("lane_usage kick=1 snare=1"))
+        XCTAssertTrue(text.contains("tick=0:beat=0:sub=0:lane=kick:vel=1.00"))
+        XCTAssertTrue(text.contains("tick=480:beat=1:sub=4:lane=snare:vel=0.70"))
     }
 
     private func makeChart(difficulty: String, measures: Int, notes: [BaseChartNote]) -> BaseChartContract {

@@ -7,6 +7,8 @@ This document defines the persisted artifact contract for the `audio_analyze` st
 The worker now expects a real analyzer command via:
 
 - `PIPELINE_AUDIO_ANALYZER_COMMAND`
+- `PIPELINE_AUDIO_ANALYZER_TIMEOUT_SECONDS` (optional)
+- `PIPELINE_AUDIO_ANALYZER_STDOUT_JSON` (optional)
 
 The command is a shell template and must include:
 
@@ -16,7 +18,9 @@ The command is a shell template and must include:
 Example:
 
 ```bash
-PIPELINE_AUDIO_ANALYZER_COMMAND="python3 /opt/mod/analyzer.py --input {input} --output {output}"
+PIPELINE_AUDIO_ANALYZER_COMMAND="python3 ./scripts/analyzer-wrapper.py --input {input} --output {output}"
+PIPELINE_AUDIO_ANALYZER_TIMEOUT_SECONDS=300
+PIPELINE_AUDIO_ANALYZER_STDOUT_JSON=false
 ```
 
 The worker will:
@@ -24,9 +28,10 @@ The worker will:
 1. claim an `audio_analyze` job
 2. create an output path under `PIPELINE_ARTIFACT_ROOT/audio-analysis/<workflow-id>/`
 3. run the analyzer command
-4. require a JSON file at `{output}`
-5. normalize that JSON into the pipeline contract if the analyzer emits a looser shape
-6. persist an `artifacts` row pointing at the JSON file URI
+4. wait for the analyzer to exit successfully (or fail on timeout/non-zero exit)
+5. read JSON from `{output}`; if stdout fallback is enabled and no file was written, accept JSON from stdout instead
+6. normalize that JSON into the pipeline contract if the analyzer emits a looser shape
+7. persist an `artifacts` row pointing at the JSON file URI
 
 ## Artifact conventions
 
@@ -64,6 +69,15 @@ Top-level persisted JSON includes:
 
 ## Expectations for analyzer implementations
 
+The runtime injects these environment variables into the analyzer process so wrappers can log or include pipeline context without extra argument churn:
+
+- `PIPELINE_ANALYZER_INPUT_PATH`
+- `PIPELINE_ANALYZER_OUTPUT_PATH`
+- `PIPELINE_ANALYZER_WORKFLOW_ID`
+- `PIPELINE_ANALYZER_JOB_ID`
+- `PIPELINE_ANALYZER_SOURCE_URI`
+- `PIPELINE_ANALYZER_REQUESTED_BY`
+
 Preferred: emit the full pipeline contract directly.
 
 Accepted: emit a simpler JSON object with fields like:
@@ -90,5 +104,7 @@ The worker will wrap that output into the stable contract, and downstream chart 
 ## Known risks
 
 - Analyzer invocation currently uses `/bin/bash -lc`, so quoting and command safety depend on the configured template.
+- Timeout enforcement currently terminates the shell process; wrappers that spawn detached children should clean those up explicitly.
+- Stdout fallback is useful for simple wrappers/tests, but file output remains the preferred production path.
 - The worker assumes file-based artifact persistence, not object storage.
 - Downstream consumers should read the artifact at `uri`; `metadata_json` is only a summary.

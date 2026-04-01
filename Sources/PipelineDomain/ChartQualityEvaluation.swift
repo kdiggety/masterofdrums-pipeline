@@ -4,7 +4,7 @@ public struct ChartEvaluationCorpus: Codable, Sendable {
     public let schemaVersion: String
     public let songs: [ChartEvaluationSong]
 
-    public init(schemaVersion: String = "1.0.0", songs: [ChartEvaluationSong]) {
+    public init(schemaVersion: String = "1.1.0", songs: [ChartEvaluationSong]) {
         self.schemaVersion = schemaVersion
         self.songs = songs
     }
@@ -16,6 +16,7 @@ public struct ChartEvaluationSong: Codable, Sendable {
     public let artist: String?
     public let sourceFixture: String
     public let notes: String?
+    public let tags: [String]
     public let expectations: [ChartQualityExpectation]
 
     public init(
@@ -24,6 +25,7 @@ public struct ChartEvaluationSong: Codable, Sendable {
         artist: String? = nil,
         sourceFixture: String,
         notes: String? = nil,
+        tags: [String] = [],
         expectations: [ChartQualityExpectation]
     ) {
         self.id = id
@@ -31,6 +33,7 @@ public struct ChartEvaluationSong: Codable, Sendable {
         self.artist = artist
         self.sourceFixture = sourceFixture
         self.notes = notes
+        self.tags = tags
         self.expectations = expectations
     }
 }
@@ -94,6 +97,7 @@ public struct ChartQualityReport: Codable, Sendable {
     public let score: Double
     public let metrics: ChartQualityMetrics
     public let issues: [ChartQualityIssue]
+    public let regressionSnapshot: ChartRegressionSnapshot
 
     public var passed: Bool {
         issues.isEmpty
@@ -107,11 +111,23 @@ public struct ChartQualityReport: Codable, Sendable {
         return "FAIL \(difficulty) score=\(Self.format(score)) issues=\(issues.map(\.code).joined(separator: ","))"
     }
 
-    public init(difficulty: String, score: Double, metrics: ChartQualityMetrics, issues: [ChartQualityIssue]) {
+    public var regressionSummary: String {
+        let issueText = issues.isEmpty ? "none" : issues.map(\.code).joined(separator: ",")
+        return [
+            summary,
+            "snapshot lanes=\(regressionSnapshot.lanes.joined(separator: ",")) measures=\(regressionSnapshot.measureCount) notes=\(regressionSnapshot.noteCount)",
+            "lane_usage \(regressionSnapshot.laneUsage.map { "\($0.lane)=\($0.noteCount)" }.joined(separator: " "))",
+            "note_preview \(regressionSnapshot.notePreview.joined(separator: " | "))",
+            "issues \(issueText)"
+        ].joined(separator: "\n")
+    }
+
+    public init(difficulty: String, score: Double, metrics: ChartQualityMetrics, issues: [ChartQualityIssue], regressionSnapshot: ChartRegressionSnapshot) {
         self.difficulty = difficulty
         self.score = score
         self.metrics = metrics
         self.issues = issues
+        self.regressionSnapshot = regressionSnapshot
     }
 
     private static func format(_ value: Double) -> String {
@@ -163,6 +179,32 @@ public struct LaneUsageMetric: Codable, Sendable {
     }
 }
 
+public struct ChartRegressionSnapshot: Codable, Sendable {
+    public let measureCount: Int
+    public let noteCount: Int
+    public let lanes: [String]
+    public let laneUsage: [ChartRegressionLaneUsage]
+    public let notePreview: [String]
+
+    public init(measureCount: Int, noteCount: Int, lanes: [String], laneUsage: [ChartRegressionLaneUsage], notePreview: [String]) {
+        self.measureCount = measureCount
+        self.noteCount = noteCount
+        self.lanes = lanes
+        self.laneUsage = laneUsage
+        self.notePreview = notePreview
+    }
+}
+
+public struct ChartRegressionLaneUsage: Codable, Sendable {
+    public let lane: String
+    public let noteCount: Int
+
+    public init(lane: String, noteCount: Int) {
+        self.lane = lane
+        self.noteCount = noteCount
+    }
+}
+
 public struct ChartQualityIssue: Codable, Sendable {
     public let code: String
     public let message: String
@@ -170,6 +212,119 @@ public struct ChartQualityIssue: Codable, Sendable {
     public init(code: String, message: String) {
         self.code = code
         self.message = message
+    }
+}
+
+public struct ChartEvaluationResult: Codable, Sendable {
+    public let songID: String
+    public let songTitle: String
+    public let sourceFixture: String
+    public let expectation: ChartQualityExpectation
+    public let report: ChartQualityReport
+
+    public var summaryLine: String {
+        "\(songID) [\(expectation.difficulty)] \(report.summary)"
+    }
+
+    public init(songID: String, songTitle: String, sourceFixture: String, expectation: ChartQualityExpectation, report: ChartQualityReport) {
+        self.songID = songID
+        self.songTitle = songTitle
+        self.sourceFixture = sourceFixture
+        self.expectation = expectation
+        self.report = report
+    }
+}
+
+public struct ChartEvaluationCorpusReport: Codable, Sendable {
+    public let schemaVersion: String
+    public let generatedAt: Date
+    public let totalExpectations: Int
+    public let passedExpectations: Int
+    public let failedExpectations: Int
+    public let results: [ChartEvaluationResult]
+    public let missingCharts: [String]
+
+    public var passed: Bool {
+        failedExpectations == 0 && missingCharts.isEmpty
+    }
+
+    public var summary: String {
+        "corpus pass=\(passedExpectations)/\(totalExpectations) failed=\(failedExpectations) missing=\(missingCharts.count)"
+    }
+
+    public func renderText() -> String {
+        var lines = [summary]
+        for result in results {
+            lines.append(result.summaryLine)
+            lines.append(result.report.regressionSummary)
+        }
+        if !missingCharts.isEmpty {
+            lines.append("missing " + missingCharts.joined(separator: ", "))
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    public init(
+        schemaVersion: String,
+        generatedAt: Date,
+        totalExpectations: Int,
+        passedExpectations: Int,
+        failedExpectations: Int,
+        results: [ChartEvaluationResult],
+        missingCharts: [String]
+    ) {
+        self.schemaVersion = schemaVersion
+        self.generatedAt = generatedAt
+        self.totalExpectations = totalExpectations
+        self.passedExpectations = passedExpectations
+        self.failedExpectations = failedExpectations
+        self.results = results
+        self.missingCharts = missingCharts
+    }
+}
+
+public enum ChartEvaluationRunner {
+    public static func evaluate(
+        corpus: ChartEvaluationCorpus,
+        generatedCharts: [String: [String: BaseChartContract]],
+        generatedAt: Date = Date()
+    ) -> ChartEvaluationCorpusReport {
+        var results: [ChartEvaluationResult] = []
+        var missingCharts: [String] = []
+
+        for song in corpus.songs {
+            let chartsForSong = generatedCharts[song.id] ?? [:]
+            for expectation in song.expectations {
+                guard let chart = chartsForSong[expectation.difficulty] else {
+                    missingCharts.append("\(song.id):\(expectation.difficulty)")
+                    continue
+                }
+                let report = ChartQualityEvaluator.evaluate(chart: chart, against: expectation)
+                results.append(
+                    ChartEvaluationResult(
+                        songID: song.id,
+                        songTitle: song.title,
+                        sourceFixture: song.sourceFixture,
+                        expectation: expectation,
+                        report: report
+                    )
+                )
+            }
+        }
+
+        let passedExpectations = results.filter { $0.report.passed }.count
+        let failedExpectations = results.count - passedExpectations + missingCharts.count
+        let totalExpectations = corpus.songs.reduce(0) { $0 + $1.expectations.count }
+
+        return ChartEvaluationCorpusReport(
+            schemaVersion: corpus.schemaVersion,
+            generatedAt: generatedAt,
+            totalExpectations: totalExpectations,
+            passedExpectations: passedExpectations,
+            failedExpectations: failedExpectations,
+            results: results,
+            missingCharts: missingCharts.sorted()
+        )
     }
 }
 
@@ -291,7 +446,8 @@ public enum ChartQualityEvaluator {
             difficulty: chart.chart.difficulty,
             score: score,
             metrics: metrics,
-            issues: issues
+            issues: issues,
+            regressionSnapshot: makeRegressionSnapshot(from: chart, metrics: metrics)
         )
     }
 
@@ -328,6 +484,28 @@ public enum ChartQualityEvaluator {
             maxNotesPerMeasure: maxNotesPerMeasure,
             emptyMeasureCount: emptyMeasureCount,
             averageNotesPerMeasure: averageNotesPerMeasure
+        )
+    }
+
+    private static func makeRegressionSnapshot(from chart: BaseChartContract, metrics: ChartQualityMetrics) -> ChartRegressionSnapshot {
+        let preview = chart.chart.notes
+            .sorted {
+                if $0.tick == $1.tick { return $0.lane.rawValue < $1.lane.rawValue }
+                return $0.tick < $1.tick
+            }
+            .prefix(12)
+            .map { note in
+                let velocity = note.velocity.map { String(format: "%.2f", $0) } ?? "nil"
+                let subdivision = note.subdivisionIndex.map(String.init) ?? "nil"
+                return "tick=\(note.tick):beat=\(note.beatIndex):sub=\(subdivision):lane=\(note.lane.rawValue):vel=\(velocity)"
+            }
+
+        return ChartRegressionSnapshot(
+            measureCount: metrics.measureCount,
+            noteCount: metrics.noteCount,
+            lanes: metrics.uniqueLanes.map(\.rawValue),
+            laneUsage: metrics.laneUsage.map { ChartRegressionLaneUsage(lane: $0.lane.rawValue, noteCount: $0.noteCount) },
+            notePreview: Array(preview)
         )
     }
 

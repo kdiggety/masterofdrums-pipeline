@@ -8,6 +8,7 @@ struct ChartGenerationOutput {
 
 enum ChartGenerator {
     private static let fallbackSubdivisionsPerBeat = 4
+    private static let supportedSubdivisionCandidates = [3, 4, 6, 8]
 
     static func generate(from analysis: AudioAnalysisContract, generatedAt: Date, normalizedAnalysisArtifactURI: String) -> ChartGenerationOutput {
         let timeSignature = TimeSignature(numerator: 4, denominator: 4)
@@ -120,13 +121,18 @@ enum ChartGenerator {
 
     private static func makeBeatGrid(from analysis: AudioAnalysisContract, timeSignature: TimeSignature) -> [BeatGridEvent] {
         if let beatStarts = extractBeatStarts(from: analysis.rawAnalyzerOutput), !beatStarts.isEmpty {
+            let sortedBeatStarts = beatStarts.sorted()
+            let analyzerCandidates = extractRawDrumEventCandidates(from: analysis.rawAnalyzerOutput)
+            let subdivisionsPerBeat = inferredAnalyzerSubdivisions(from: analysis.rawAnalyzerOutput)
+                ?? inferredSubdivisionsFromAnalyzerEvents(beatStarts: sortedBeatStarts, candidates: analyzerCandidates)
+                ?? fallbackSubdivisionsPerBeat
             return beatGridFromBeatStarts(
-                beatStarts.sorted(),
+                sortedBeatStarts,
                 downbeatStarts: extractDownbeatStarts(from: analysis.rawAnalyzerOutput) ?? [],
                 tempoBPM: analysis.analysis.estimatedTempoBPM,
                 confidence: analysis.analysis.confidence,
                 timeSignature: timeSignature,
-                subdivisionsPerBeat: inferredAnalyzerSubdivisions(from: analysis.rawAnalyzerOutput) ?? fallbackSubdivisionsPerBeat
+                subdivisionsPerBeat: subdivisionsPerBeat
             )
         }
 
@@ -517,6 +523,77 @@ enum ChartGenerator {
         return nil
     }
 
+    private static func inferredSubdivisionsFromAnalyzerEvents(beatStarts: [Double], candidates: [[String: RawJSONValue]]) -> Int? {
+        guard beatStarts.count >= 2 else { return nil }
+        let onsets = candidates.compactMap { candidate in
+            rawDouble(
+                candidate["onsetSeconds"]
+                    ?? candidate["onset_seconds"]
+                    ?? candidate["time"]
+                    ?? candidate["timestamp"]
+                    ?? candidate["timeSeconds"]
+                    ?? candidate["time_seconds"]
+                    ?? candidate["startSeconds"]
+                    ?? candidate["start_seconds"]
+            )
+        }
+        .filter { $0.isFinite && $0 >= beatStarts.first! && $0 <= beatStarts.last! + estimateFinalBeatDuration(from: beatStarts, tempoBPM: nil) }
+
+        guard onsets.count >= 2 else { return nil }
+
+        var bestSubdivision = fallbackSubdivisionsPerBeat
+        var bestScore = Double.greatestFiniteMagnitude
+
+        for subdivision in supportedSubdivisionCandidates {
+            let score = quantizationErrorScore(onsets: onsets, beatStarts: beatStarts, subdivisionsPerBeat: subdivision)
+            if score + 0.0001 < bestScore {
+                bestScore = score
+                bestSubdivision = subdivision
+            }
+        }
+
+        return bestScore.isFinite ? bestSubdivision : nil
+    }
+
+    private static func quantizationErrorScore(onsets: [Double], beatStarts: [Double], subdivisionsPerBeat: Int) -> Double {
+        guard subdivisionsPerBeat > 0 else { return Double.greatestFiniteMagnitude }
+        var weightedError = 0.0
+        var sampleCount = 0
+
+        for onset in onsets {
+            guard let beatIndex = nearestBeatIndex(for: onset, beatStarts: beatStarts) else { continue }
+            let beatStart = beatStarts[beatIndex]
+            let nextBeatStart = beatIndex + 1 < beatStarts.count
+                ? beatStarts[beatIndex + 1]
+                : beatStart + estimateFinalBeatDuration(from: beatStarts, tempoBPM: nil)
+            let beatDuration = max(nextBeatStart - beatStart, 0.0001)
+            let relative = min(max((onset - beatStart) / beatDuration, 0), 1)
+            let quantizedStep = (relative * Double(subdivisionsPerBeat)).rounded()
+            let quantizedRelative = min(max(quantizedStep / Double(subdivisionsPerBeat), 0), 1)
+            weightedError += abs(relative - quantizedRelative)
+            sampleCount += 1
+        }
+
+        guard sampleCount > 0 else { return Double.greatestFiniteMagnitude }
+        return weightedError / Double(sampleCount)
+    }
+
+    private static func nearestBeatIndex(for onset: Double, beatStarts: [Double]) -> Int? {
+        guard !beatStarts.isEmpty else { return nil }
+        if beatStarts.count == 1 { return 0 }
+
+        for index in 0..<(beatStarts.count - 1) {
+            let start = beatStarts[index]
+            let next = beatStarts[index + 1]
+            if onset >= start && onset < next {
+                return index
+            }
+        }
+
+        if onset < beatStarts[0] { return 0 }
+        return beatStarts.count - 1
+    }
+
     private static func candidateRootObjects(from raw: RawJSONValue?) -> [[String: RawJSONValue]] {
         guard let root = raw?.dictionary else { return [] }
         var objects: [[String: RawJSONValue]] = [root]
@@ -578,15 +655,15 @@ enum ChartGenerator {
     private static func mapLane(_ rawValue: RawJSONValue?) -> DrumLane? {
         guard let raw = normalizedLaneLabel(rawValue) else { return nil }
         switch raw {
-        case "kick", "bd", "bass_drum", "bassdrum", "kik": return .kick
-        case "snare", "sd", "sn", "rimshot", "cross_stick": return .snare
-        case "hihat_closed", "closed_hihat", "closed_hat", "closed_hi_hat", "hhc", "hat_closed", "hi_hat_closed", "chh": return .hihatClosed
-        case "hihat_open", "open_hihat", "open_hat", "open_hi_hat", "hho", "hat_open", "hi_hat_open", "ohh": return .hihatOpen
+        case "kick", "bd", "bass_drum", "bassdrum", "bass_drum_1", "bass_drum_2", "bassdrum_1", "bassdrum_2", "kik": return .kick
+        case "snare", "sd", "sn", "rimshot", "cross_stick", "side_stick": return .snare
+        case "hihat_closed", "closed_hihat", "closed_hat", "closed_hi_hat", "closed_hihat", "hhc", "hat_closed", "hi_hat_closed", "chh": return .hihatClosed
+        case "hihat_open", "open_hihat", "open_hat", "open_hi_hat", "open_hihat", "hho", "hat_open", "hi_hat_open", "ohh": return .hihatOpen
         case "tom_low", "low_tom", "floor_tom", "floortom": return .tomLow
-        case "tom_mid", "mid_tom", "middle_tom", "tom_medium": return .tomMid
-        case "tom_high", "high_tom", "rack_tom": return .tomHigh
-        case "crash", "crash_cymbal", "crash_left", "crash_right": return .crash
-        case "ride", "ride_cymbal", "ride_bell": return .ride
+        case "tom_mid", "mid_tom", "middle_tom", "mid_tom_1", "tom_medium": return .tomMid
+        case "tom_high", "high_tom", "rack_tom", "racktom": return .tomHigh
+        case "crash", "crash_cymbal", "crash_left", "crash_right", "crash_1", "crash_2": return .crash
+        case "ride", "ride_cymbal", "ride_bell", "ride_1", "ride_2": return .ride
         case "clap", "handclap", "hand_clap": return .clap
         case "percussion", "perc", "cowbell", "shaker", "tambourine": return .percussion
         default: return nil

@@ -28,6 +28,28 @@ final class ChartGenerationTests: XCTestCase {
         XCTAssertTrue(generated.baseChart.note?.contains("4x") == true)
     }
 
+    func testGenerateInfersTripletSubdivisionFromAnalyzerEventTiming() throws {
+        let analysis = makeAnalysis(raw: [
+            "beats": [0.0, 0.5, 1.0],
+            "drumEvents": [
+                ["eventID": "kick-1", "label": "bass drum", "onsetSeconds": 0.0, "velocity": 1.0],
+                ["eventID": "snare-1", "label": "snare", "onsetSeconds": 0.333, "velocity": 0.8],
+                ["eventID": "hat-1", "label": "closed hi hat", "onsetSeconds": 0.667, "velocity": 0.5]
+            ]
+        ])
+
+        let generated = ChartGenerator.generate(
+            from: analysis,
+            generatedAt: Date(timeIntervalSince1970: 0),
+            normalizedAnalysisArtifactURI: "file:///tmp/normalized.json"
+        )
+
+        XCTAssertEqual(generated.normalized.beatGrid.count, 9)
+        XCTAssertEqual(generated.baseChart.chart.notes.map(\.tick), [0, 320, 640])
+        XCTAssertEqual(generated.baseChart.chart.notes.map(\.subdivisionIndex), [0, 2, 4])
+        XCTAssertTrue(generated.normalized.note?.contains("3x") == true)
+    }
+
     func testGenerateWarnsWhenCandidatesAreDroppedAndMapsLaneAliases() throws {
         let analysis = makeAnalysis(raw: [
             "beats": [0.0, 0.5],

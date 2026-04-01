@@ -1,41 +1,48 @@
 # Chart Quality Evaluation Scaffold
 
-This repo now has a small, explicit scaffold for story 5: evaluating generated charts against a tiny fixture corpus before pretending the charting loop is "good enough."
+This repo now has a more concrete story-5 loop: a small corpus fixture, an evaluator, and a regression-friendly report shape that can describe generated charts without snapshotting brittle full JSON artifacts.
 
 ## What this slice adds
 
 - `ChartEvaluationCorpus` / `ChartEvaluationSong` / `ChartQualityExpectation`
+- optional song tags in the corpus fixture so the set can grow into smoke/regression/edge-case buckets
 - `ChartQualityEvaluator.evaluate(chart:against:)`
-- a first corpus fixture at `Tests/PipelineRuntimeTests/Fixtures/chart-eval-corpus.json`
-- tests that prove the evaluator can distinguish a reasonable chart from obviously weak charts
-- richer metrics and reporting without introducing a heavyweight golden-master system
+- `ChartEvaluationRunner.evaluate(corpus:generatedCharts:)` for corpus-level pass/fail aggregation
+- a deterministic `ChartRegressionSnapshot` embedded in each report
+- text rendering via `ChartEvaluationCorpusReport.renderText()` for cheap regression assertions
+- a richer corpus fixture at `Tests/PipelineRuntimeTests/Fixtures/chart-eval-corpus.json`
+- tests that exercise both pure evaluator behavior and the real runtime-generated base chart from the WAV fixture
 
-This is intentionally lightweight. It does **not** claim to solve chart quality. It gives the next implementation step somewhere concrete to plug in.
+This is still intentionally lightweight. It does **not** claim to solve chart quality. It gives the repo a less hand-wavy seam for checking whether generated charts stay sane as the generator evolves.
 
 ## Corpus shape
 
-The current corpus fixture is a JSON manifest of songs:
+The corpus fixture is now a JSON manifest of songs plus expectation variants:
 
 ```json
 {
-  "schemaVersion": "1.0.0",
+  "schemaVersion": "1.1.0",
   "songs": [
     {
       "id": "known-tone",
       "title": "Known Tone Fixture",
       "sourceFixture": "known-tone.wav",
+      "tags": ["synthetic", "fixture", "smoke"],
       "expectations": [
+        {
+          "difficulty": "prototype",
+          "noteCountRange": { "min": 2, "max": 4 },
+          "requiredLanes": ["kick", "snare"],
+          "allowedLanes": ["kick", "snare", "hihat_closed"],
+          "maxNotesPerBeat": 1,
+          "minimumScore": 0.9
+        },
         {
           "difficulty": "easy",
           "noteCountRange": { "min": 1, "max": 8 },
-          "measureCountRange": { "min": 1, "max": 4 },
           "requiredLanes": ["kick"],
           "allowedLanes": ["kick", "snare", "hihat_closed"],
-          "minDistinctLanes": 1,
-          "maxSimultaneousNotes": 1,
           "maxNotesPerBeat": 2,
-          "maxNotesPerMeasure": 8,
-          "allowedEmptyMeasures": 1,
           "minimumScore": 0.7
         }
       ]
@@ -44,7 +51,11 @@ The current corpus fixture is a JSON manifest of songs:
 }
 ```
 
-That is still the right level for now: enough to express easy sanity checks without locking the project into a giant gold-master format too early.
+That is still intentionally compact, but it is now closer to a real corpus shape:
+
+- one fixture song can carry multiple difficulty expectations
+- songs can be grouped with tags later (`smoke`, `edge`, `dense`, etc.)
+- missing generated charts are reported explicitly instead of silently skipped
 
 ## What the evaluator measures today
 
@@ -65,54 +76,82 @@ It then compares those metrics against a fixture expectation and emits:
 - `score` — a lightweight weighted sanity score from `0...1`
 - `issues` — explicit failures like `unexpected_lanes`, `too_many_empty_measures`, or `score_below_threshold`
 - `metrics` — raw values for debugging and future reporting
-- `summary` — a compact pass/fail string that is cheap to print in tests or a future CLI
+- `summary` — a compact pass/fail string
+- `regressionSnapshot` — a stable reduced representation of the generated chart
+- `regressionSummary` — a multiline text block that is cheap to assert in tests or print from a future CLI
+
+## Regression-friendly chart checking
+
+Full artifact snapshots are annoying here because generated chart JSON contains fields like timestamps and UUID-like note identifiers that are noisy in regressions.
+
+The current report avoids that by projecting the chart into a stable snapshot with:
+
+- measure count
+- note count
+- normalized lane list
+- per-lane counts
+- a sorted preview of the first notes as strings like:
+  - `tick=0:beat=0:sub=0:lane=kick:vel=1.00`
+  - `tick=240:beat=1:sub=2:lane=snare:vel=0.70`
+
+That is deliberately opinionated: it keeps the parts of the generated chart that matter for structural regressions, while ignoring volatile IDs and timestamps.
+
+## Corpus runner/reporting shape
+
+`ChartEvaluationRunner.evaluate(corpus:generatedCharts:)` returns `ChartEvaluationCorpusReport`, which carries:
+
+- total / passed / failed expectation counts
+- per-song, per-difficulty results
+- explicit missing chart keys like `known-tone:easy`
+- `renderText()` output intended for regression assertions and future CLI printing
+
+Example report shape:
+
+```text
+corpus pass=1/2 failed=1 missing=1
+known-tone [prototype] PASS prototype score=1.00 notes=2 measures=1 lanes=kick,snare
+snapshot lanes=kick,snare measures=1 notes=2
+lane_usage kick=1 snare=1
+note_preview tick=0:beat=0:sub=0:lane=kick:vel=1.00 | tick=240:beat=1:sub=2:lane=snare:vel=0.70
+issues none
+missing known-tone:easy
+```
+
+That is a much better fit for CI and regression review than storing raw generated `base_chart` JSON as a brittle golden master.
 
 ## Why this is the right next step
 
-The repo already has contract work for:
+The repo already had contract work for:
 
 - `audio_analysis`
 - `normalized_analysis`
 - `base_chart`
 
-What it did **not** have was a feedback loop for answering: _did the generated chart look sane for this song at this difficulty?_
+What it still needed was a loop that can answer both:
 
-This scaffold creates that seam without forcing the full chart generation worker to exist first.
+1. did a generated chart pass sanity checks for this fixture?
+2. if it changed, can we see the structural delta in a stable way?
 
-## Current expectation knobs
-
-The current evaluator intentionally stays in "sanity check" territory. Expectations can now describe:
-
-- note-count and measure-count ranges
-- required lanes and allowed lanes
-- minimum distinct lane variety
-- maximum chord size (`maxSimultaneousNotes`)
-- maximum note density per beat and per measure
-- tolerance for empty measures
-- a minimum acceptable aggregate score
-
-That gives enough structure to catch under-charted, over-charted, or oddly sparse results without pretending the system understands musical feel.
-
-## Recommended next iteration
-
-The next concrete story slice should be:
-
-1. hook generated `base_chart` artifacts into a fixture/corpus runner
-2. load the corpus manifest in a test or fixture runner
-3. evaluate generated charts with `ChartQualityEvaluator`
-4. persist or print `ChartQualityReport.summary` plus the raw issue list for regression checks
-5. grow the corpus from one synthetic audio fixture to a small mixed set:
-   - steady 4/4 kick-snare groove
-   - denser rock loop with hihat activity
-   - syncopated or sparse edge case
+This slice adds that seam without committing the project to a heavyweight snapshot system.
 
 ## Current limitations / honest caveats
 
-- The current corpus is tiny and synthetic.
-- The score is still intentionally simple; it is a sanity score, not a musicality score.
-- The weighting is heuristic rather than data-calibrated.
-- There is no dedicated CLI/reporting surface for this yet.
-- The evaluator works on `BaseChartContract`, so it still depends on chart generation existing upstream.
-- Empty-measure detection assumes `BaseChartMeasure.startBeatIndex` / `beatCount` are coherent.
+- The corpus is still tiny and synthetic.
+- Only one actual audio fixture exists right now.
+- The score is still a sanity score, not a musicality score.
+- The text report is regression-friendly, but not yet exposed by a dedicated CLI command.
+- The note preview is intentionally partial; it helps with drift detection but is not a full chart diff.
+- Missing expectations currently count as failures, which is useful for enforcement but may need separate severity later.
 
-That said, this is enough to stop chart quality from being purely vibes-based.
+## Recommended next iteration
+
+1. add 2-4 more fixture songs or loops with distinct rhythmic shapes
+2. expose corpus evaluation through a small CLI/testing harness instead of only XCTest
+3. optionally persist `renderText()` or JSON reports as CI artifacts
+4. add a stronger structural fingerprint if note counts grow large:
+   - per-measure density summaries
+   - beat occupancy histograms
+   - lane-transition counts
+5. split the corpus by tag so smoke tests can stay fast while deeper regression suites grow
+
+That is enough to move the chart loop a step closer to a real evaluation pipeline instead of vibes and eyeballing.

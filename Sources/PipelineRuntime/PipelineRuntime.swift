@@ -359,6 +359,8 @@ public struct PipelineRuntime {
         let outputURL = try prepareArtifactOutputURL(workflowID: job.workflowID, jobID: job.id, createdAt: now)
         let rawAnalysis = try runAudioAnalyzer(
             analyzer,
+            workflowID: job.workflowID,
+            jobID: job.id,
             sourceURL: fileURL,
             outputURL: outputURL,
             payload: payload,
@@ -591,6 +593,8 @@ public struct PipelineRuntime {
 
     private func runAudioAnalyzer(
         _ configuration: AudioAnalyzerConfiguration,
+        workflowID: String,
+        jobID: String,
         sourceURL: URL,
         outputURL: URL,
         payload: AudioAnalyzePayload,
@@ -599,6 +603,15 @@ public struct PipelineRuntime {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
         process.arguments = ["-lc", configuration.renderCommand(inputPath: sourceURL.path, outputPath: outputURL.path)]
+        process.environment = configuration.processEnvironment(
+            inherited: ProcessInfo.processInfo.environment,
+            workflowID: workflowID,
+            jobID: jobID,
+            inputPath: sourceURL.path,
+            outputPath: outputURL.path,
+            sourceURI: payload.sourceURI,
+            requestedBy: payload.requestedBy
+        )
 
         let stdout = Pipe()
         let stderr = Pipe()
@@ -606,23 +619,40 @@ public struct PipelineRuntime {
         process.standardError = stderr
 
         try process.run()
-        process.waitUntilExit()
+        if let timeout = configuration.timeoutSeconds {
+            let deadline = Date().addingTimeInterval(timeout)
+            while process.isRunning {
+                if Date() >= deadline {
+                    process.terminate()
+                    throw PipelineRuntimeError.audioAnalyzerTimedOut(timeout)
+                }
+                Thread.sleep(forTimeInterval: 0.1)
+            }
+        } else {
+            process.waitUntilExit()
+        }
 
-        let stderrText = String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        let stdoutText = String(decoding: stdout.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        let stderrText = String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
         guard process.terminationStatus == 0 else {
-            throw PipelineRuntimeError.audioAnalyzerFailed(stderrText.isEmpty ? "analyzer exited with status \(process.terminationStatus)" : stderrText)
+            throw PipelineRuntimeError.audioAnalyzerFailed(Self.describeAnalyzerFailure(status: process.terminationStatus, stderrText: stderrText, stdoutText: stdoutText))
         }
 
-        guard FileManager.default.fileExists(atPath: outputURL.path) else {
-            throw PipelineRuntimeError.audioAnalyzerFailed("analyzer did not write output file: \(outputURL.path)")
+        let outputData: Data
+        if FileManager.default.fileExists(atPath: outputURL.path) {
+            outputData = try Data(contentsOf: outputURL)
+        } else if configuration.acceptsStdoutJSON, let stdoutData = stdoutText.data(using: .utf8), Self.looksLikeJSON(stdoutText) {
+            try stdoutData.write(to: outputURL, options: .atomic)
+            outputData = stdoutData
+        } else {
+            throw PipelineRuntimeError.audioAnalyzerFailed(Self.missingAnalyzerOutputMessage(outputPath: outputURL.path, stdoutText: stdoutText, stderrText: stderrText, acceptsStdoutJSON: configuration.acceptsStdoutJSON))
         }
 
-        let data = try Data(contentsOf: outputURL)
-        if let decoded = try? JSONDecoder.pipeline.decode(AudioAnalysisContract.self, from: data) {
+        if let decoded = try? JSONDecoder.pipeline.decode(AudioAnalysisContract.self, from: outputData) {
             return decoded
         }
 
-        let rawObject = try JSONSerialization.jsonObject(with: data)
+        let rawObject = try JSONSerialization.jsonObject(with: outputData)
         let normalized = AudioAnalysisContract.fromAnalyzerOutput(
             rawObject,
             sourceType: payload.sourceType,
@@ -745,6 +775,36 @@ public struct PipelineRuntime {
         return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
+    private static func looksLikeJSON(_ text: String) -> Bool {
+        guard let first = text.first else { return false }
+        return first == "{" || first == "["
+    }
+
+    private static func describeAnalyzerFailure(status: Int32, stderrText: String, stdoutText: String) -> String {
+        var parts: [String] = ["analyzer exited with status \(status)"]
+        if !stderrText.isEmpty {
+            parts.append("stderr: \(stderrText)")
+        }
+        if !stdoutText.isEmpty && !looksLikeJSON(stdoutText) {
+            parts.append("stdout: \(stdoutText)")
+        }
+        return parts.joined(separator: " | ")
+    }
+
+    private static func missingAnalyzerOutputMessage(outputPath: String, stdoutText: String, stderrText: String, acceptsStdoutJSON: Bool) -> String {
+        var parts: [String] = ["analyzer did not write output file: \(outputPath)"]
+        if acceptsStdoutJSON {
+            parts.append("stdout fallback was enabled but stdout did not contain JSON")
+        }
+        if !stderrText.isEmpty {
+            parts.append("stderr: \(stderrText)")
+        }
+        if !stdoutText.isEmpty {
+            parts.append("stdout: \(stdoutText)")
+        }
+        return parts.joined(separator: " | ")
+    }
+
     private static func filenameTimestamp(_ date: Date) -> String {
         artifactFilenameFormatter.string(from: date)
     }
@@ -795,9 +855,11 @@ public struct PipelineRuntime {
       list-artifacts [--workflow-id <workflow-id>] [--job-id <job-id>] [--limit <count>]
 
     Worker environment:
-      PIPELINE_WORKER_POLL_INTERVAL_SECONDS  Seconds to wait between empty polls (default: 1)
-      PIPELINE_ARTIFACT_ROOT                 Root directory for persisted analysis artifacts
-      PIPELINE_AUDIO_ANALYZER_COMMAND        Shell command template with {input} and {output} placeholders
+      PIPELINE_WORKER_POLL_INTERVAL_SECONDS    Seconds to wait between empty polls (default: 1)
+      PIPELINE_ARTIFACT_ROOT                   Root directory for persisted analysis artifacts
+      PIPELINE_AUDIO_ANALYZER_COMMAND          Shell command template with {input} and {output} placeholders
+      PIPELINE_AUDIO_ANALYZER_TIMEOUT_SECONDS  Optional analyzer timeout in seconds
+      PIPELINE_AUDIO_ANALYZER_STDOUT_JSON      Accept analyzer JSON from stdout when {output} is not written (default: false)
     """
 }
 
@@ -855,6 +917,7 @@ public enum PipelineRuntimeError: LocalizedError {
     case sourceNotFound(String)
     case unsupportedJobType(String)
     case audioAnalyzerNotConfigured
+    case audioAnalyzerTimedOut(TimeInterval)
     case audioAnalyzerFailed(String)
 
     public var errorDescription: String? {
@@ -865,6 +928,8 @@ public enum PipelineRuntimeError: LocalizedError {
             return "Unsupported job type: \(type)"
         case .audioAnalyzerNotConfigured:
             return "Audio analyzer is not configured. Set PIPELINE_AUDIO_ANALYZER_COMMAND with {input} and {output} placeholders."
+        case .audioAnalyzerTimedOut(let timeout):
+            return "Audio analyzer timed out after \(timeout) seconds"
         case .audioAnalyzerFailed(let message):
             return "Audio analyzer failed: \(message)"
         }
@@ -895,13 +960,20 @@ public struct AudioIngestResult: Codable, Sendable {
 
 public struct AudioAnalyzerConfiguration: Sendable {
     public let commandTemplate: String
+    public let timeoutSeconds: TimeInterval?
+    public let acceptsStdoutJSON: Bool
 
     public var isEnabled: Bool {
-        !commandTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let trimmed = commandTemplate.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !trimmed.isEmpty && trimmed.contains("{input}") && trimmed.contains("{output}")
     }
 
     public static func fromEnvironment(_ environment: [String: String] = ProcessInfo.processInfo.environment) -> AudioAnalyzerConfiguration {
-        AudioAnalyzerConfiguration(commandTemplate: environment["PIPELINE_AUDIO_ANALYZER_COMMAND"] ?? "")
+        AudioAnalyzerConfiguration(
+            commandTemplate: environment["PIPELINE_AUDIO_ANALYZER_COMMAND"] ?? "",
+            timeoutSeconds: environment["PIPELINE_AUDIO_ANALYZER_TIMEOUT_SECONDS"].flatMap(TimeInterval.init),
+            acceptsStdoutJSON: Self.boolFlag(environment["PIPELINE_AUDIO_ANALYZER_STDOUT_JSON"])
+        )
     }
 
     public func renderCommand(inputPath: String, outputPath: String) -> String {
@@ -910,8 +982,32 @@ public struct AudioAnalyzerConfiguration: Sendable {
             .replacingOccurrences(of: "{output}", with: Self.shellEscape(outputPath))
     }
 
+    public func processEnvironment(
+        inherited: [String: String],
+        workflowID: String,
+        jobID: String,
+        inputPath: String,
+        outputPath: String,
+        sourceURI: String,
+        requestedBy: String
+    ) -> [String: String] {
+        var environment = inherited
+        environment["PIPELINE_ANALYZER_INPUT_PATH"] = inputPath
+        environment["PIPELINE_ANALYZER_OUTPUT_PATH"] = outputPath
+        environment["PIPELINE_ANALYZER_WORKFLOW_ID"] = workflowID
+        environment["PIPELINE_ANALYZER_JOB_ID"] = jobID
+        environment["PIPELINE_ANALYZER_SOURCE_URI"] = sourceURI
+        environment["PIPELINE_ANALYZER_REQUESTED_BY"] = requestedBy
+        return environment
+    }
+
     private static func shellEscape(_ value: String) -> String {
         "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    private static func boolFlag(_ value: String?) -> Bool {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() else { return false }
+        return ["1", "true", "yes", "on"].contains(value)
     }
 }
 
