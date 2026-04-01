@@ -134,15 +134,15 @@ Implemented so far:
 - domain/application/runtime structure
 - SQLite schema definition and DB-first docs
 - CLI-oriented runtime direction
-- analyzer runtime integration with timeout/stdout-fallback controls and a concrete wrapper example (`scripts/analyzer-wrapper.py`)
+- analyzer runtime integration with timeout/stdout-fallback controls, a direct `validate-audio-analyzer` smoke-test command, and a concrete wrapper example (`scripts/analyzer-wrapper.py`)
 
 Still to implement:
 
 - concrete chart-generation analyzer wrappers behind the configured analyzer command
 - richer analyzer outputs that include beat/downbeat arrays and lane-level drum-event candidates
 - downstream chart validation/export built on the normalized chart-generation artifacts
-- broader fixture/integration coverage beyond the single known WAV path
-- a dedicated CLI surface for corpus evaluation/report export; the quality loop exists in tests/domain code but is not yet an operator-facing command
+- broader fixture/integration coverage beyond the single known WAV path (the corpus/reporting shape now includes real-clip review metadata, linting, and regression summaries, but only one actual WAV fixture is checked in)
+- a dedicated CLI surface for corpus evaluation/report export; the quality loop exists in tests/domain code with manifest linting and review-friendly text output, but is not yet an operator-facing command
 
 ## Current Testable Slice
 
@@ -158,10 +158,11 @@ Example flow:
 
 ```bash
 export PIPELINE_AUDIO_ANALYZER_COMMAND="python3 ./scripts/analyzer-wrapper.py --input {input} --output {output} --probe-only"
-# or delegate through the wrapper to a real backend command
-# export PIPELINE_AUDIO_ANALYZER_COMMAND="python3 ./scripts/analyzer-wrapper.py --input {input} --output {output} --backend-command 'python3 /opt/mod/backend-analyzer.py --in {input} --out {output}'"
+# or keep the wrapper command stable and swap the real backend underneath it
+# export PIPELINE_ANALYZER_BACKEND_COMMAND="python3 /opt/mod/backend-analyzer.py --in {input} --out {output}"
 export PIPELINE_AUDIO_ANALYZER_TIMEOUT_SECONDS=300
 
+swift run MasterOfDrumsPipeline validate-audio-analyzer --source-uri file:///tmp/test.wav --source-type file --requested-by cli
 swift run MasterOfDrumsPipeline init-db
 swift run MasterOfDrumsPipeline enqueue-audio-ingest --source-uri file:///tmp/test.wav --source-type file --requested-by cli
 swift run MasterOfDrumsPipeline worker --stop-after-idle-polls 2

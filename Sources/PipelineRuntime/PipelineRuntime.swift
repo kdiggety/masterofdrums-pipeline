@@ -14,6 +14,7 @@ public enum PipelineCLICommand: Equatable {
     case initDB
     case worker(stopAfterIdlePolls: Int?)
     case enqueueAudioIngest(sourceURI: String, sourceType: String, requestedBy: String, idempotencyKey: String?)
+    case validateAudioAnalyzer(sourceURI: String, sourceType: String, requestedBy: String, outputPath: String?)
     case listJobs(status: PipelineJobStatus?)
     case showJob(id: String)
     case listEvents(workflowID: String?, jobID: String?, limit: Int)
@@ -81,6 +82,10 @@ public struct PipelineRuntime {
                 createdAt: Date()
             )
             print("[pipeline] enqueued audio-ingest job \(job.id) for \(sourceURI)")
+
+        case .validateAudioAnalyzer(let sourceURI, let sourceType, let requestedBy, let outputPath):
+            let analysis = try validateAudioAnalyzer(sourceURI: sourceURI, sourceType: sourceType, requestedBy: requestedBy, outputPath: outputPath)
+            print(analysis.toJSONString())
 
         case .listJobs(let status):
             if database.configuration.autoMigrate {
@@ -439,6 +444,66 @@ public struct PipelineRuntime {
         return analysis.toJSONString()
     }
 
+    public func validateAudioAnalyzer(sourceURI: String, sourceType: String = "file", requestedBy: String = "cli", outputPath: String? = nil) throws -> AudioAnalysisContract {
+        let payload = AudioAnalyzePayload(sourceType: sourceType, sourceURI: sourceURI, requestedBy: requestedBy)
+        let sourceURL = try resolveLocalFileURL(from: sourceURI)
+        let filePath = sourceURL.path
+        guard FileManager.default.fileExists(atPath: filePath) else {
+            throw PipelineRuntimeError.sourceNotFound(sourceURI)
+        }
+
+        let analyzer = audioAnalyzerConfiguration
+        guard analyzer.isEnabled else {
+            throw PipelineRuntimeError.audioAnalyzerNotConfigured
+        }
+
+        let outputURL: URL
+        if let outputPath, !outputPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            outputURL = URL(fileURLWithPath: outputPath)
+            if let directory = outputURL.deletingLastPathComponent() as URL? {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            }
+        } else {
+            let tempDirectory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("masterofdrums-pipeline", isDirectory: true)
+                .appendingPathComponent("analyzer-validation", isDirectory: true)
+            try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+            outputURL = tempDirectory.appendingPathComponent("\(UUID().uuidString).json")
+        }
+
+        let analysis = try runAudioAnalyzer(
+            analyzer,
+            workflowID: "analyzer-validation",
+            jobID: UUID().uuidString,
+            sourceURL: sourceURL,
+            outputURL: outputURL,
+            payload: payload,
+            analyzedAt: Date()
+        )
+        let persisted = AudioAnalysisContract(
+            schemaVersion: analysis.schemaVersion,
+            source: analysis.source,
+            analysis: AudioAnalysisSummary(
+                analyzedAt: analysis.analysis.analyzedAt,
+                durationSeconds: analysis.analysis.durationSeconds,
+                audioTrackCount: analysis.analysis.audioTrackCount,
+                estimatedSegmentCount: analysis.analysis.estimatedSegmentCount,
+                estimatedTempoBPM: analysis.analysis.estimatedTempoBPM,
+                downbeatOffsetSeconds: analysis.analysis.downbeatOffsetSeconds,
+                confidence: analysis.analysis.confidence,
+                artifactURI: outputURL.absoluteString,
+                analyzerCommand: analyzer.commandTemplate
+            ),
+            segments: analysis.segments,
+            warnings: analysis.warnings,
+            note: analysis.note,
+            rawAnalyzerOutput: analysis.rawAnalyzerOutput
+        )
+        try persisted.write(to: outputURL)
+        fputs("[pipeline] analyzer validation artifact: \(outputURL.path)\n", stderr)
+        return persisted
+    }
+
     private func executeChartGenerate(job: PipelineJob, now: Date) async throws -> String {
         let payload = try decodeChartGeneratePayload(from: job.payloadJSON)
         let analysisURL = try resolveLocalFileURL(from: payload.audioAnalysisArtifactURI)
@@ -614,6 +679,7 @@ public struct PipelineRuntime {
             jobID: jobID,
             inputPath: sourceURL.path,
             outputPath: outputURL.path,
+            sourceType: payload.sourceType,
             sourceURI: payload.sourceURI,
             requestedBy: payload.requestedBy
         )
@@ -854,6 +920,7 @@ public struct PipelineRuntime {
       init-db
       worker [--stop-after-idle-polls <count>]
       enqueue-audio-ingest --source-uri <uri> [--source-type file] [--requested-by cli] [--idempotency-key <key>]
+      validate-audio-analyzer --source-uri <uri> [--source-type file] [--requested-by cli] [--output-path <path>]
       list-jobs [--status queued|running|failed|succeeded|cancelled]
       show-job <job-id>
       list-events [--workflow-id <workflow-id>] [--job-id <job-id>] [--limit <count>]
@@ -885,6 +952,13 @@ public enum PipelineCLIParser {
                 sourceType: value(for: "--source-type", in: args) ?? "file",
                 requestedBy: value(for: "--requested-by", in: args) ?? "cli",
                 idempotencyKey: value(for: "--idempotency-key", in: args)
+            )
+        case "validate-audio-analyzer":
+            return .validateAudioAnalyzer(
+                sourceURI: value(for: "--source-uri", in: args) ?? "",
+                sourceType: value(for: "--source-type", in: args) ?? "file",
+                requestedBy: value(for: "--requested-by", in: args) ?? "cli",
+                outputPath: value(for: "--output-path", in: args)
             )
         case "list-jobs":
             return .listJobs(status: value(for: "--status", in: args).flatMap(PipelineJobStatus.init(rawValue:)))
@@ -994,6 +1068,7 @@ public struct AudioAnalyzerConfiguration: Sendable {
         jobID: String,
         inputPath: String,
         outputPath: String,
+        sourceType: String,
         sourceURI: String,
         requestedBy: String
     ) -> [String: String] {
@@ -1002,8 +1077,11 @@ public struct AudioAnalyzerConfiguration: Sendable {
         environment["PIPELINE_ANALYZER_OUTPUT_PATH"] = outputPath
         environment["PIPELINE_ANALYZER_WORKFLOW_ID"] = workflowID
         environment["PIPELINE_ANALYZER_JOB_ID"] = jobID
+        environment["PIPELINE_ANALYZER_SOURCE_TYPE"] = sourceType
         environment["PIPELINE_ANALYZER_SOURCE_URI"] = sourceURI
         environment["PIPELINE_ANALYZER_REQUESTED_BY"] = requestedBy
+        environment["PIPELINE_ANALYZER_CONTRACT_SCHEMA_URI"] = AudioAnalysisContract.schemaURI
+        environment["PIPELINE_ANALYZER_CONTRACT_SCHEMA_VERSION"] = AudioAnalysisContract.schemaVersion
         return environment
     }
 

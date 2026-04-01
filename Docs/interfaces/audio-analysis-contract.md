@@ -19,6 +19,7 @@ Example:
 
 ```bash
 PIPELINE_AUDIO_ANALYZER_COMMAND="python3 ./scripts/analyzer-wrapper.py --input {input} --output {output}"
+PIPELINE_ANALYZER_BACKEND_COMMAND="python3 /opt/mod/backend-analyzer.py --in {input} --out {output}"
 PIPELINE_AUDIO_ANALYZER_TIMEOUT_SECONDS=300
 PIPELINE_AUDIO_ANALYZER_STDOUT_JSON=false
 ```
@@ -69,7 +70,9 @@ Top-level persisted JSON includes:
 
 ## Expectations for analyzer implementations
 
-The runtime injects these environment variables into the analyzer process so wrappers can log or include pipeline context without extra argument churn:
+The runtime injects these environment variables into the analyzer process so wrappers can log or include pipeline context without extra argument churn. Because the worker inherits the parent environment, wrapper-specific variables such as `PIPELINE_ANALYZER_BACKEND_COMMAND` can also be used to keep the top-level analyzer command stable while swapping real backend implementations.
+
+The runtime injects these environment variables into the analyzer process:
 
 - `PIPELINE_ANALYZER_INPUT_PATH`
 - `PIPELINE_ANALYZER_OUTPUT_PATH`
@@ -105,13 +108,20 @@ For chart-generation normalization, looser wrapper outputs are also accepted whe
 
 The worker will wrap that output into the stable contract, and downstream chart generation will attempt to normalize those common variants before falling back to heuristic timing/events.
 
+## Fast validation loop
+
+Before enqueueing full workflows, operators can now run:
+
+```bash
+swift run MasterOfDrumsPipeline validate-audio-analyzer --source-uri file:///tmp/test.wav --output-path /tmp/audio-analysis.json
+```
+
+That command runs the configured analyzer directly, normalizes loose backend output into the persisted contract, writes the resulting artifact, and prints the normalized JSON. It is meant as the quickest way to verify a real backend command/template before involving SQLite job orchestration.
+
 ## Known risks
 
 - Analyzer invocation currently uses `/bin/bash -lc`, so quoting and command safety depend on the configured template.
 - Timeout enforcement currently terminates the shell process; wrappers that spawn detached children should clean those up explicitly.
 - Stdout fallback is useful for simple wrappers/tests, but file output remains the preferred production path.
-- The worker assumes file-based artifact persistence, not object storage.
-- Downstream consumers should read the artifact at `uri`; `metadata_json` is only a summary.
-mple wrappers/tests, but file output remains the preferred production path.
 - The worker assumes file-based artifact persistence, not object storage.
 - Downstream consumers should read the artifact at `uri`; `metadata_json` is only a summary.

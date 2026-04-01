@@ -4,7 +4,7 @@ public struct ChartEvaluationCorpus: Codable, Sendable {
     public let schemaVersion: String
     public let songs: [ChartEvaluationSong]
 
-    public init(schemaVersion: String = "1.2.0", songs: [ChartEvaluationSong]) {
+    public init(schemaVersion: String = "1.3.0", songs: [ChartEvaluationSong]) {
         self.schemaVersion = schemaVersion
         self.songs = songs
     }
@@ -16,10 +16,14 @@ public struct ChartEvaluationSong: Codable, Sendable {
     public let artist: String?
     public let sourceFixture: String
     public let sourceType: String
+    public let sourceProvenance: String?
     public let clipDurationSeconds: Double?
     public let reviewStatus: String?
+    public let baselineStatus: String?
+    public let baselineChartID: String?
     public let notes: String?
     public let reviewNotes: [String]
+    public let reviewChecklist: [String]
     public let tags: [String]
     public let expectations: [ChartQualityExpectation]
 
@@ -29,10 +33,14 @@ public struct ChartEvaluationSong: Codable, Sendable {
         artist: String? = nil,
         sourceFixture: String,
         sourceType: String = "fixture_audio",
+        sourceProvenance: String? = nil,
         clipDurationSeconds: Double? = nil,
         reviewStatus: String? = nil,
+        baselineStatus: String? = nil,
+        baselineChartID: String? = nil,
         notes: String? = nil,
         reviewNotes: [String] = [],
+        reviewChecklist: [String] = [],
         tags: [String] = [],
         expectations: [ChartQualityExpectation]
     ) {
@@ -41,10 +49,14 @@ public struct ChartEvaluationSong: Codable, Sendable {
         self.artist = artist
         self.sourceFixture = sourceFixture
         self.sourceType = sourceType
+        self.sourceProvenance = sourceProvenance
         self.clipDurationSeconds = clipDurationSeconds
         self.reviewStatus = reviewStatus
+        self.baselineStatus = baselineStatus
+        self.baselineChartID = baselineChartID
         self.notes = notes
         self.reviewNotes = reviewNotes
+        self.reviewChecklist = reviewChecklist
         self.tags = tags
         self.expectations = expectations
     }
@@ -253,22 +265,45 @@ public struct ChartQualityIssue: Codable, Sendable {
     }
 }
 
+public struct ChartEvaluationLintIssue: Codable, Sendable {
+    public let severity: String
+    public let code: String
+    public let songID: String?
+    public let message: String
+
+    public init(severity: String, code: String, songID: String? = nil, message: String) {
+        self.severity = severity
+        self.code = code
+        self.songID = songID
+        self.message = message
+    }
+}
+
 public struct ChartEvaluationResult: Codable, Sendable {
     public let songID: String
     public let songTitle: String
     public let sourceFixture: String
     public let sourceType: String
+    public let sourceProvenance: String?
     public let clipDurationSeconds: Double?
     public let songTags: [String]
     public let reviewStatus: String?
-    public let expectation: ChartQualityExpectation
+    public let baselineStatus: String?
+    public let baselineChartID: String?
     public let report: ChartQualityReport
+    public let expectation: ChartQualityExpectation
 
     public var summaryLine: String {
         let durationText = clipDurationSeconds.map { String(format: "%.2fs", $0) } ?? "unknown"
         let tagText = songTags.isEmpty ? "-" : songTags.joined(separator: ",")
         let reviewText = reviewStatus ?? "unspecified"
-        return "\(songID) [\(expectation.difficulty)] \(report.summary) source=\(sourceFixture) source_type=\(sourceType) duration=\(durationText) tags=\(tagText) review=\(reviewText)"
+        let baselineText = baselineStatus ?? "unspecified"
+        let baselineChartText = baselineChartID ?? "none"
+        return "\(songID) [\(expectation.difficulty)] \(report.summary) source=\(sourceFixture) source_type=\(sourceType) duration=\(durationText) tags=\(tagText) review=\(reviewText) baseline=\(baselineText) baseline_chart=\(baselineChartText)"
+    }
+
+    public var provenanceLine: String? {
+        sourceProvenance.map { "provenance \($0)" }
     }
 
     public init(
@@ -276,9 +311,12 @@ public struct ChartEvaluationResult: Codable, Sendable {
         songTitle: String,
         sourceFixture: String,
         sourceType: String,
+        sourceProvenance: String?,
         clipDurationSeconds: Double?,
         songTags: [String],
         reviewStatus: String?,
+        baselineStatus: String?,
+        baselineChartID: String?,
         expectation: ChartQualityExpectation,
         report: ChartQualityReport
     ) {
@@ -286,9 +324,12 @@ public struct ChartEvaluationResult: Codable, Sendable {
         self.songTitle = songTitle
         self.sourceFixture = sourceFixture
         self.sourceType = sourceType
+        self.sourceProvenance = sourceProvenance
         self.clipDurationSeconds = clipDurationSeconds
         self.songTags = songTags
         self.reviewStatus = reviewStatus
+        self.baselineStatus = baselineStatus
+        self.baselineChartID = baselineChartID
         self.expectation = expectation
         self.report = report
     }
@@ -308,6 +349,16 @@ public struct CorpusTagSummary: Codable, Sendable {
     }
 }
 
+public struct CorpusValueSummary: Codable, Sendable {
+    public let key: String
+    public let count: Int
+
+    public init(key: String, count: Int) {
+        self.key = key
+        self.count = count
+    }
+}
+
 public struct ChartEvaluationCorpusReport: Codable, Sendable {
     public let schemaVersion: String
     public let generatedAt: Date
@@ -317,22 +368,44 @@ public struct ChartEvaluationCorpusReport: Codable, Sendable {
     public let results: [ChartEvaluationResult]
     public let missingCharts: [String]
     public let tagSummaries: [CorpusTagSummary]
+    public let sourceTypeSummaries: [CorpusValueSummary]
+    public let reviewStatusSummaries: [CorpusValueSummary]
+    public let baselineStatusSummaries: [CorpusValueSummary]
+    public let lintIssues: [ChartEvaluationLintIssue]
 
     public var passed: Bool {
-        failedExpectations == 0 && missingCharts.isEmpty
+        failedExpectations == 0 && missingCharts.isEmpty && !lintIssues.contains { $0.severity == "error" }
     }
 
     public var summary: String {
-        "corpus pass=\(passedExpectations)/\(totalExpectations) failed=\(failedExpectations) missing=\(missingCharts.count) tags=\(tagSummaries.count)"
+        "corpus pass=\(passedExpectations)/\(totalExpectations) failed=\(failedExpectations) missing=\(missingCharts.count) tags=\(tagSummaries.count) lint=\(lintIssues.count)"
     }
 
     public func renderText() -> String {
         var lines = [summary]
+        if !sourceTypeSummaries.isEmpty {
+            lines.append("source_summary " + sourceTypeSummaries.map { "\($0.key)=\($0.count)" }.joined(separator: " "))
+        }
+        if !reviewStatusSummaries.isEmpty {
+            lines.append("review_summary " + reviewStatusSummaries.map { "\($0.key)=\($0.count)" }.joined(separator: " "))
+        }
+        if !baselineStatusSummaries.isEmpty {
+            lines.append("baseline_summary " + baselineStatusSummaries.map { "\($0.key)=\($0.count)" }.joined(separator: " "))
+        }
         if !tagSummaries.isEmpty {
             lines.append("tag_summary " + tagSummaries.map { "\($0.tag)=\($0.passedExpectations)/\($0.totalExpectations)" }.joined(separator: " "))
         }
+        if !lintIssues.isEmpty {
+            for issue in lintIssues {
+                let songText = issue.songID.map { " song=\($0)" } ?? ""
+                lines.append("lint severity=\(issue.severity) code=\(issue.code)\(songText) message=\(issue.message)")
+            }
+        }
         for result in results {
             lines.append(result.summaryLine)
+            if let provenanceLine = result.provenanceLine {
+                lines.append(provenanceLine)
+            }
             lines.append(result.report.regressionSummary)
         }
         if !missingCharts.isEmpty {
@@ -349,7 +422,11 @@ public struct ChartEvaluationCorpusReport: Codable, Sendable {
         failedExpectations: Int,
         results: [ChartEvaluationResult],
         missingCharts: [String],
-        tagSummaries: [CorpusTagSummary]
+        tagSummaries: [CorpusTagSummary],
+        sourceTypeSummaries: [CorpusValueSummary],
+        reviewStatusSummaries: [CorpusValueSummary],
+        baselineStatusSummaries: [CorpusValueSummary],
+        lintIssues: [ChartEvaluationLintIssue]
     ) {
         self.schemaVersion = schemaVersion
         self.generatedAt = generatedAt
@@ -359,6 +436,63 @@ public struct ChartEvaluationCorpusReport: Codable, Sendable {
         self.results = results
         self.missingCharts = missingCharts
         self.tagSummaries = tagSummaries
+        self.sourceTypeSummaries = sourceTypeSummaries
+        self.reviewStatusSummaries = reviewStatusSummaries
+        self.baselineStatusSummaries = baselineStatusSummaries
+        self.lintIssues = lintIssues
+    }
+}
+
+public enum ChartEvaluationCorpusLinter {
+    public static func lint(_ corpus: ChartEvaluationCorpus) -> [ChartEvaluationLintIssue] {
+        var issues: [ChartEvaluationLintIssue] = []
+        var seenSongIDs = Set<String>()
+
+        for song in corpus.songs {
+            if !seenSongIDs.insert(song.id).inserted {
+                issues.append(.init(severity: "error", code: "duplicate_song_id", songID: song.id, message: "Song IDs must be unique within the corpus."))
+            }
+
+            var seenDifficulties = Set<String>()
+            for expectation in song.expectations {
+                if !seenDifficulties.insert(expectation.difficulty).inserted {
+                    issues.append(.init(severity: "error", code: "duplicate_expectation_difficulty", songID: song.id, message: "Each song should only define one expectation per difficulty."))
+                }
+            }
+
+            if song.expectations.isEmpty {
+                issues.append(.init(severity: "warning", code: "missing_expectations", songID: song.id, message: "Song has no expectations yet."))
+            }
+
+            if song.sourceType == "real_clip" {
+                if (song.sourceProvenance ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    issues.append(.init(severity: "warning", code: "missing_source_provenance", songID: song.id, message: "Real clips should record where the review audio came from."))
+                }
+                if (song.reviewStatus ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    issues.append(.init(severity: "warning", code: "missing_review_status", songID: song.id, message: "Real clips should declare a review status."))
+                }
+                if song.reviewNotes.isEmpty {
+                    issues.append(.init(severity: "warning", code: "missing_review_notes", songID: song.id, message: "Real clips should include review notes for human reviewers."))
+                }
+                if song.reviewChecklist.isEmpty {
+                    issues.append(.init(severity: "warning", code: "missing_review_checklist", songID: song.id, message: "Real clips should include a review checklist for regression signoff."))
+                }
+                if !song.tags.contains("regression") && !song.tags.contains("smoke") {
+                    issues.append(.init(severity: "warning", code: "missing_execution_tag", songID: song.id, message: "Real clips should be tagged for at least one execution lane such as smoke or regression."))
+                }
+            }
+
+            if song.baselineStatus == "approved_baseline" && (song.baselineChartID ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                issues.append(.init(severity: "warning", code: "missing_baseline_chart_id", songID: song.id, message: "Approved baselines should record the chart artifact or snapshot ID they were approved against."))
+            }
+        }
+
+        return issues.sorted {
+            let lhsSong = $0.songID ?? ""
+            let rhsSong = $1.songID ?? ""
+            if lhsSong == rhsSong { return $0.code < $1.code }
+            return lhsSong < rhsSong
+        }
     }
 }
 
@@ -371,6 +505,7 @@ public enum ChartEvaluationRunner {
         var results: [ChartEvaluationResult] = []
         var missingCharts: [String] = []
         var tagStats: [String: (total: Int, passed: Int)] = [:]
+        let lintIssues = ChartEvaluationCorpusLinter.lint(corpus)
 
         for song in corpus.songs {
             let chartsForSong = generatedCharts[song.id] ?? [:]
@@ -397,9 +532,12 @@ public enum ChartEvaluationRunner {
                         songTitle: song.title,
                         sourceFixture: song.sourceFixture,
                         sourceType: song.sourceType,
+                        sourceProvenance: song.sourceProvenance,
                         clipDurationSeconds: song.clipDurationSeconds,
                         songTags: song.tags,
                         reviewStatus: song.reviewStatus,
+                        baselineStatus: song.baselineStatus,
+                        baselineChartID: song.baselineChartID,
                         expectation: expectation,
                         report: report
                     )
@@ -428,8 +566,18 @@ public enum ChartEvaluationRunner {
             failedExpectations: failedExpectations,
             results: results,
             missingCharts: missingCharts.sorted(),
-            tagSummaries: tagSummaries
+            tagSummaries: tagSummaries,
+            sourceTypeSummaries: summarizeValues(corpus.songs.map(\.sourceType)),
+            reviewStatusSummaries: summarizeValues(corpus.songs.map { $0.reviewStatus ?? "unspecified" }),
+            baselineStatusSummaries: summarizeValues(corpus.songs.map { $0.baselineStatus ?? "unspecified" }),
+            lintIssues: lintIssues
         )
+    }
+
+    private static func summarizeValues(_ values: [String]) -> [CorpusValueSummary] {
+        Dictionary(grouping: values, by: { $0 })
+            .map { CorpusValueSummary(key: $0.key, count: $0.value.count) }
+            .sorted { $0.key < $1.key }
     }
 }
 

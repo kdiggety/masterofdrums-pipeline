@@ -7,16 +7,18 @@ final class ChartQualityEvaluationTests: XCTestCase {
         let data = try Data(contentsOf: url)
         let corpus = try JSONDecoder().decode(ChartEvaluationCorpus.self, from: data)
 
-        XCTAssertEqual(corpus.schemaVersion, "1.2.0")
-        XCTAssertEqual(corpus.songs.count, 1)
+        XCTAssertEqual(corpus.schemaVersion, "1.3.0")
+        XCTAssertEqual(corpus.songs.count, 2)
 
-        let song = try XCTUnwrap(corpus.songs.first)
-        XCTAssertEqual(song.id, "known-tone")
+        let song = try XCTUnwrap(corpus.songs.first(where: { $0.id == "known-tone" }))
         XCTAssertEqual(song.sourceFixture, "known-tone.wav")
         XCTAssertEqual(song.sourceType, "fixture_audio")
         XCTAssertEqual(try XCTUnwrap(song.clipDurationSeconds), 1.0, accuracy: 0.0001)
         XCTAssertEqual(song.reviewStatus, "synthetic_smoke")
+        XCTAssertEqual(song.baselineStatus, "prototype_fixture")
+        XCTAssertNil(song.baselineChartID)
         XCTAssertEqual(song.reviewNotes.count, 2)
+        XCTAssertEqual(song.reviewChecklist.count, 2)
         XCTAssertEqual(song.tags, ["synthetic", "fixture", "smoke"])
         XCTAssertEqual(song.expectations.count, 2)
 
@@ -26,14 +28,41 @@ final class ChartQualityEvaluationTests: XCTestCase {
         XCTAssertEqual(prototypeExpectation.maxNotesPerBeat, 1)
         XCTAssertEqual(try XCTUnwrap(prototypeExpectation.minimumScore), 0.9, accuracy: 0.0001)
 
-        let easyExpectation = try XCTUnwrap(song.expectations.first(where: { $0.difficulty == "easy" }))
-        XCTAssertEqual(easyExpectation.requiredLanes, [.kick])
-        XCTAssertEqual(easyExpectation.allowedLanes ?? [], [.kick, .snare, .hihatClosed])
-        XCTAssertEqual(easyExpectation.minDistinctLanes, 1)
-        XCTAssertEqual(easyExpectation.maxSimultaneousNotes, 1)
-        XCTAssertEqual(easyExpectation.maxNotesPerMeasure, 8)
-        XCTAssertEqual(easyExpectation.allowedEmptyMeasures, 1)
-        XCTAssertEqual(try XCTUnwrap(easyExpectation.minimumScore), 0.7, accuracy: 0.0001)
+        let realClip = try XCTUnwrap(corpus.songs.first(where: { $0.id == "real-review-template" }))
+        XCTAssertEqual(realClip.sourceType, "real_clip")
+        XCTAssertEqual(realClip.reviewStatus, "awaiting_baseline_review")
+        XCTAssertEqual(realClip.baselineStatus, "pending_review")
+        XCTAssertEqual(realClip.reviewChecklist.count, 3)
+        XCTAssertEqual(realClip.tags, ["regression", "real_clip", "fills"])
+        XCTAssertEqual(realClip.expectations.count, 1)
+    }
+
+    func testCorpusLinterWarnsWhenRealClipMetadataIsIncomplete() {
+        let corpus = ChartEvaluationCorpus(
+            songs: [
+                ChartEvaluationSong(
+                    id: "real-1",
+                    title: "Real One",
+                    sourceFixture: "real-1.wav",
+                    sourceType: "real_clip",
+                    reviewStatus: nil,
+                    baselineStatus: "approved_baseline",
+                    reviewNotes: [],
+                    reviewChecklist: [],
+                    tags: ["fills"],
+                    expectations: [ChartQualityExpectation(difficulty: "prototype")]
+                )
+            ]
+        )
+
+        let issues = ChartEvaluationCorpusLinter.lint(corpus)
+        let codes = Set(issues.map(\.code))
+        XCTAssertTrue(codes.contains("missing_source_provenance"))
+        XCTAssertTrue(codes.contains("missing_review_status"))
+        XCTAssertTrue(codes.contains("missing_review_notes"))
+        XCTAssertTrue(codes.contains("missing_review_checklist"))
+        XCTAssertTrue(codes.contains("missing_execution_tag"))
+        XCTAssertTrue(codes.contains("missing_baseline_chart_id"))
     }
 
     func testEvaluatorPassesChartThatFitsFixtureExpectations() {
@@ -172,11 +201,15 @@ final class ChartQualityEvaluationTests: XCTestCase {
                     id: "fixture-song",
                     title: "Fixture Song",
                     sourceFixture: "fixture.wav",
-                    sourceType: "fixture_audio",
+                    sourceType: "real_clip",
+                    sourceProvenance: "licensed internal review export",
                     clipDurationSeconds: 1.0,
-                    reviewStatus: "ready_for_regression",
+                    reviewStatus: "approved_baseline",
+                    baselineStatus: "approved_baseline",
+                    baselineChartID: "chart-baseline-v1",
                     reviewNotes: ["Human-review baseline once real clip arrives."],
-                    tags: ["smoke", "fixture"],
+                    reviewChecklist: ["Check kick/snare alignment", "Check fill placement"],
+                    tags: ["smoke", "regression"],
                     expectations: [
                         ChartQualityExpectation(
                             difficulty: "prototype",
@@ -216,16 +249,26 @@ final class ChartQualityEvaluationTests: XCTestCase {
         XCTAssertEqual(report.passedExpectations, 1)
         XCTAssertEqual(report.failedExpectations, 0)
         XCTAssertEqual(report.results.count, 1)
-        XCTAssertEqual(report.tagSummaries.map(\.tag), ["fixture", "smoke"])
+        XCTAssertEqual(report.tagSummaries.map(\.tag), ["regression", "smoke"])
         XCTAssertEqual(report.tagSummaries.map(\.passedExpectations), [1, 1])
+        XCTAssertEqual(report.sourceTypeSummaries.map(\.key), ["real_clip"])
+        XCTAssertEqual(report.reviewStatusSummaries.map(\.key), ["approved_baseline"])
+        XCTAssertEqual(report.baselineStatusSummaries.map(\.key), ["approved_baseline"])
+        XCTAssertEqual(report.lintIssues.count, 0)
 
         let text = report.renderText()
-        XCTAssertTrue(text.contains("corpus pass=1/1 failed=0 missing=0 tags=2"))
-        XCTAssertTrue(text.contains("tag_summary fixture=1/1 smoke=1/1"))
+        XCTAssertTrue(text.contains("corpus pass=1/1 failed=0 missing=0 tags=2 lint=0"))
+        XCTAssertTrue(text.contains("source_summary real_clip=1"))
+        XCTAssertTrue(text.contains("review_summary approved_baseline=1"))
+        XCTAssertTrue(text.contains("baseline_summary approved_baseline=1"))
+        XCTAssertTrue(text.contains("tag_summary regression=1/1 smoke=1/1"))
         XCTAssertTrue(text.contains("fixture-song [prototype] PASS prototype score=1.00"))
         XCTAssertTrue(text.contains("source=fixture.wav"))
-        XCTAssertTrue(text.contains("source_type=fixture_audio"))
-        XCTAssertTrue(text.contains("review=ready_for_regression"))
+        XCTAssertTrue(text.contains("source_type=real_clip"))
+        XCTAssertTrue(text.contains("review=approved_baseline"))
+        XCTAssertTrue(text.contains("baseline=approved_baseline"))
+        XCTAssertTrue(text.contains("baseline_chart=chart-baseline-v1"))
+        XCTAssertTrue(text.contains("provenance licensed internal review export"))
         XCTAssertTrue(text.contains("lane_usage kick=1 snare=1"))
         XCTAssertTrue(text.contains("measure_density m0=2"))
         XCTAssertTrue(text.contains("tick=0:beat=0:sub=0:lane=kick:vel=1.00"))

@@ -6,6 +6,7 @@ before the real beat/drum analyzer stack is wired in. It demonstrates:
 
 - required CLI surface: --input / --output
 - optional backend command passthrough for real analyzer integration
+- backend command env fallback so the wrapper entry point can stay stable across backend swaps
 - optional stdout JSON mode for wrapper authors
 - stable JSON fields the Swift worker can normalize today
 - useful metadata/warnings for downstream debugging
@@ -43,6 +44,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--backend-command",
         help="optional shell command for a real backend; may use {input} and {output} placeholders",
+    )
+    parser.add_argument(
+        "--backend-command-env",
+        default="PIPELINE_ANALYZER_BACKEND_COMMAND",
+        help="environment variable to read the backend command from when --backend-command is omitted (default: PIPELINE_ANALYZER_BACKEND_COMMAND)",
     )
     parser.add_argument(
         "--backend-stdout-json",
@@ -226,11 +232,15 @@ def main() -> int:
     output_path = pathlib.Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    backend_command = args.backend_command
+    if not backend_command and args.backend_command_env:
+        backend_command = os.environ.get(args.backend_command_env)
+
     payload = run_real_analyzer(
         args.input,
         args.output,
         probe_only=args.probe_only,
-        backend_command=args.backend_command,
+        backend_command=backend_command,
         backend_stdout_json=args.backend_stdout_json,
     )
     text = json.dumps(payload, sort_keys=True)

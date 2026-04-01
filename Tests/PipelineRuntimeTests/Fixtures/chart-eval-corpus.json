@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "1.2.0",
+  "schemaVersion": "1.3.0",
   "songs": [
     {
       "id": "known-tone",
@@ -7,12 +7,18 @@
       "artist": "Test Fixture",
       "sourceFixture": "known-tone.wav",
       "sourceType": "fixture_audio",
+      "sourceProvenance": "bundled XCTest fixture",
       "clipDurationSeconds": 1.0,
       "reviewStatus": "synthetic_smoke",
+      "baselineStatus": "prototype_fixture",
       "notes": "Synthetic fixture corpus entry used to exercise real runtime chart generation plus regression-friendly reporting.",
       "reviewNotes": [
         "Replace with real isolated drum clips once licensing and storage path are settled.",
         "Keep prototype expectation tight so CI catches structural drift before musical review."
+      ],
+      "reviewChecklist": [
+        "Verify kick/snare ordering stays stable.",
+        "Verify no extra lane leakage appears in prototype output."
       ],
       "tags": ["synthetic", "fixture", "smoke"],
       "expectations": [
@@ -41,6 +47,43 @@
           "maxNotesPerMeasure": 8,
           "allowedEmptyMeasures": 1,
           "minimumScore": 0.7
+        }
+      ]
+    },
+    {
+      "id": "real-review-template",
+      "title": "Real Review Template",
+      "artist": "TBD",
+      "sourceFixture": "review-set/real-review-template.wav",
+      "sourceType": "real_clip",
+      "sourceProvenance": "placeholder path for small licensed/internal review set",
+      "clipDurationSeconds": 12.0,
+      "reviewStatus": "awaiting_baseline_review",
+      "baselineStatus": "pending_review",
+      "notes": "Manifest-only template entry to document the metadata expected when the first real clip lands.",
+      "reviewNotes": [
+        "Use a short clip with clear kick/snare/fill content.",
+        "Keep expectations conservative until a human approves the first baseline."
+      ],
+      "reviewChecklist": [
+        "Check groove lane balance.",
+        "Check fill timing near transitions.",
+        "Check no obvious overcharting bursts appear."
+      ],
+      "tags": ["regression", "real_clip", "fills"],
+      "expectations": [
+        {
+          "difficulty": "prototype",
+          "noteCountRange": { "min": 4, "max": 24 },
+          "measureCountRange": { "min": 2, "max": 8 },
+          "requiredLanes": ["kick", "snare"],
+          "allowedLanes": ["kick", "snare", "hihat_closed", "tomHigh", "tomMid", "tomLow", "crash", "ride"],
+          "minDistinctLanes": 2,
+          "maxSimultaneousNotes": 2,
+          "maxNotesPerBeat": 3,
+          "maxNotesPerMeasure": 12,
+          "allowedEmptyMeasures": 1,
+          "minimumScore": 0.5
         }
       ]
     }

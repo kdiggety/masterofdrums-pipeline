@@ -21,9 +21,9 @@ final class ChartGenerationTests: XCTestCase {
         XCTAssertEqual(generated.normalized.summary.beatCount, 3)
         XCTAssertEqual(generated.normalized.beatGrid.count, 12)
         XCTAssertEqual(generated.baseChart.chart.notes.count, 2)
-        XCTAssertEqual(generated.baseChart.chart.notes[0].tick, 115)
+        XCTAssertEqual(generated.baseChart.chart.notes[0].tick, 120)
         XCTAssertEqual(generated.baseChart.chart.notes[0].subdivisionIndex, 1)
-        XCTAssertEqual(generated.baseChart.chart.notes[1].tick, 365)
+        XCTAssertEqual(generated.baseChart.chart.notes[1].tick, 360)
         XCTAssertEqual(generated.baseChart.chart.notes[1].lane, .hihatClosed)
         XCTAssertTrue(generated.baseChart.note?.contains("4x") == true)
     }
@@ -95,6 +95,28 @@ final class ChartGenerationTests: XCTestCase {
         XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("without onset timing") }))
         XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("unmapped lanes") }))
         XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("Mapped 1 of 3 analyzer drum-event candidates") }))
+    }
+
+    func testGenerateDeduplicatesAnalyzerEventsThatCollapseIntoSameQuantizedLaneSlot() throws {
+        let analysis = makeAnalysis(raw: [
+            "beats": [0.0, 0.5, 1.0],
+            "drumEvents": [
+                ["eventID": "snare-weak", "label": "snare", "onsetSeconds": 0.49, "velocity": 0.4, "confidence": 0.4],
+                ["eventID": "snare-strong", "label": "snare", "onsetSeconds": 0.48, "velocity": 0.9, "confidence": 0.9],
+                ["eventID": "kick", "label": "kick", "onsetSeconds": 0.0, "velocity": 1.0, "confidence": 0.8]
+            ]
+        ])
+
+        let generated = ChartGenerator.generate(
+            from: analysis,
+            generatedAt: Date(timeIntervalSince1970: 0),
+            normalizedAnalysisArtifactURI: "file:///tmp/normalized.json"
+        )
+
+        XCTAssertEqual(generated.normalized.drumEvents.count, 2)
+        XCTAssertEqual(generated.normalized.drumEvents.map(\.eventID), ["kick", "snare-strong"])
+        XCTAssertEqual(generated.baseChart.chart.notes.map(\.tick), [0, 480])
+        XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("Collapsed 1 analyzer drum-event duplicates") }))
     }
 
     func testGenerateFallsBackToDeterministicQuarterNoteGridWithoutAnalyzerEvents() throws {

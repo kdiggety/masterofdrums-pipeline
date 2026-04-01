@@ -253,7 +253,8 @@ The next refinement step should be to improve the quality of those artifacts by:
 1. replacing fallback tempo-derived beat grids with richer analyzer-provided beat/downbeat arrays whenever available
 2. improving drum-event normalization and lane mapping from analyzer output
 3. tightening quantization from coarse beat anchoring to subdivision-aware placement
-4. feeding generated `base_chart` artifacts into the chart-quality evaluation loop
-5. preparing `chart_validate` to consume the persisted `base_chart` artifact directly
+4. collapsing duplicate analyzer hits that quantize into the same gameplay lane/slot so the chart reflects intent instead of raw detector spam
+5. feeding generated `base_chart` artifacts into the chart-quality evaluation loop
+6. preparing `chart_validate` to consume the persisted `base_chart` artifact directly
 
 That keeps `chart_validate` deterministic while moving chart generation from heuristic scaffolding toward analyzer-driven output.

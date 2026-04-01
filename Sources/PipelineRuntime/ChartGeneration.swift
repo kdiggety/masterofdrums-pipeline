@@ -78,6 +78,7 @@ enum ChartGenerator {
         let usedFallback: Bool
         let totalCandidates: Int
         let mappedCandidates: Int
+        let deduplicatedCandidates: Int
         let droppedMissingOnset: Int
         let droppedUnknownLane: Int
         let maxQuantizationErrorSeconds: Double?
@@ -108,6 +109,9 @@ enum ChartGenerator {
         }
         if drumEventDiagnostics.droppedUnknownLane > 0 {
             warnings.append("Dropped \(drumEventDiagnostics.droppedUnknownLane) drum-event candidates with unmapped lanes.")
+        }
+        if drumEventDiagnostics.deduplicatedCandidates > 0 {
+            warnings.append("Collapsed \(drumEventDiagnostics.deduplicatedCandidates) analyzer drum-event duplicates that landed on the same lane and quantized slot.")
         }
         if drumEventDiagnostics.totalCandidates > 0, drumEventDiagnostics.mappedCandidates < drumEventDiagnostics.totalCandidates {
             warnings.append("Mapped \(drumEventDiagnostics.mappedCandidates) of \(drumEventDiagnostics.totalCandidates) analyzer drum-event candidates into gameplay lanes.")
@@ -309,16 +313,16 @@ enum ChartGenerator {
             )
         }
 
-        if !mapped.isEmpty {
+        let reduced = reduceMappedDrumEvents(mapped)
+
+        if !reduced.events.isEmpty {
             return DrumEventResult(
-                events: mapped.sorted {
-                    if $0.onsetSeconds == $1.onsetSeconds { return $0.lane.rawValue < $1.lane.rawValue }
-                    return $0.onsetSeconds < $1.onsetSeconds
-                },
+                events: reduced.events,
                 diagnostics: DrumEventDiagnostics(
                     usedFallback: false,
                     totalCandidates: candidates.count,
-                    mappedCandidates: mapped.count,
+                    mappedCandidates: reduced.events.count,
+                    deduplicatedCandidates: reduced.deduplicatedCandidates,
                     droppedMissingOnset: droppedMissingOnset,
                     droppedUnknownLane: droppedUnknownLane,
                     maxQuantizationErrorSeconds: observedQuantization ? maxQuantizationError : nil,
@@ -334,12 +338,54 @@ enum ChartGenerator {
                 usedFallback: true,
                 totalCandidates: candidates.count,
                 mappedCandidates: 0,
+                deduplicatedCandidates: 0,
                 droppedMissingOnset: droppedMissingOnset,
                 droppedUnknownLane: droppedUnknownLane,
                 maxQuantizationErrorSeconds: nil,
                 laneMappingsUsed: Set(fallback.map(\.lane))
             )
         )
+    }
+
+    private struct ReducedMappedEvents {
+        let events: [DetectedDrumEvent]
+        let deduplicatedCandidates: Int
+    }
+
+    private static func reduceMappedDrumEvents(_ mapped: [DetectedDrumEvent]) -> ReducedMappedEvents {
+        guard !mapped.isEmpty else {
+            return ReducedMappedEvents(events: [], deduplicatedCandidates: 0)
+        }
+
+        let grouped = Dictionary(grouping: mapped) { event in
+            "\(event.onsetSubdivisionIndex ?? -1)|\(event.onsetBeatIndex ?? -1)|\(event.lane.rawValue)"
+        }
+
+        var deduplicatedCandidates = 0
+        let reduced = grouped.values.compactMap { group -> DetectedDrumEvent? in
+            guard let best = group.max(by: isPreferredDuplicate(_:_:)) else { return nil }
+            deduplicatedCandidates += max(group.count - 1, 0)
+            return best
+        }
+        .sorted {
+            if $0.onsetSeconds == $1.onsetSeconds { return $0.lane.rawValue < $1.lane.rawValue }
+            return $0.onsetSeconds < $1.onsetSeconds
+        }
+
+        return ReducedMappedEvents(events: reduced, deduplicatedCandidates: deduplicatedCandidates)
+    }
+
+    private static func isPreferredDuplicate(_ lhs: DetectedDrumEvent, _ rhs: DetectedDrumEvent) -> Bool {
+        let lhsConfidence = lhs.confidence ?? -1
+        let rhsConfidence = rhs.confidence ?? -1
+        if lhsConfidence != rhsConfidence { return lhsConfidence < rhsConfidence }
+
+        let lhsVelocity = lhs.velocity ?? -1
+        let rhsVelocity = rhs.velocity ?? -1
+        if lhsVelocity != rhsVelocity { return lhsVelocity < rhsVelocity }
+
+        if lhs.onsetSeconds != rhs.onsetSeconds { return lhs.onsetSeconds < rhs.onsetSeconds }
+        return lhs.eventID < rhs.eventID
     }
 
     private static func heuristicDrumEvents(from beatGrid: [BeatGridEvent], confidence: Double?) -> [DetectedDrumEvent] {
@@ -482,13 +528,39 @@ enum ChartGenerator {
             lastAnchor.durationSeconds.map { lastAnchor.startSeconds + $0 }
         } ?? (beatStart + 60.0 / 120.0)
         let beatDuration = max(beatEnd - beatStart, 0.0001)
-        let relative = min(max((event.onsetSeconds - beatStart) / beatDuration, 0), 0.999)
-        let offsetTicks = Int((relative * Double(ticksPerBeat)).rounded())
+        let quantizedRelative = min(max((anchor.startSeconds - beatStart) / beatDuration, 0), 0.999)
+        let offsetTicks = Int((quantizedRelative * Double(ticksPerBeat)).rounded())
         return beatIndex * ticksPerBeat + offsetTicks
     }
 
     private static func nearestAnchor(to onsetSeconds: Double, beatGrid: [BeatGridEvent]) -> BeatGridEvent? {
-        beatGrid.min { abs($0.startSeconds - onsetSeconds) < abs($1.startSeconds - onsetSeconds) }
+        guard !beatGrid.isEmpty else { return nil }
+
+        let beatAnchors = Dictionary(grouping: beatGrid, by: \.beatIndex)
+        let sortedBeatIndices = beatAnchors.keys.sorted()
+
+        for (position, beatIndex) in sortedBeatIndices.enumerated() {
+            guard let anchors = beatAnchors[beatIndex]?.sorted(by: { $0.startSeconds < $1.startSeconds }),
+                  let beatStart = anchors.first?.startSeconds else {
+                continue
+            }
+            let beatEnd: Double = {
+                if position + 1 < sortedBeatIndices.count,
+                   let nextBeatStart = beatAnchors[sortedBeatIndices[position + 1]]?.sorted(by: { $0.startSeconds < $1.startSeconds }).first?.startSeconds {
+                    return nextBeatStart
+                }
+                if let last = anchors.last, let duration = last.durationSeconds {
+                    return last.startSeconds + duration
+                }
+                return beatStart + 60.0 / 120.0
+            }()
+
+            if onsetSeconds >= beatStart && onsetSeconds < beatEnd {
+                return anchors.min { abs($0.startSeconds - onsetSeconds) < abs($1.startSeconds - onsetSeconds) }
+            }
+        }
+
+        return beatGrid.min { abs($0.startSeconds - onsetSeconds) < abs($1.startSeconds - onsetSeconds) }
     }
 
     private static func extractBeatStarts(from raw: RawJSONValue?) -> [Double]? {

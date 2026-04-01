@@ -160,23 +160,31 @@ final class PipelineRuntimeFixtureTests: XCTestCase {
         )
 
         XCTAssertFalse(corpusReport.passed)
-        XCTAssertEqual(corpusReport.totalExpectations, 2)
+        XCTAssertEqual(corpusReport.totalExpectations, 3)
         XCTAssertEqual(corpusReport.passedExpectations, 1)
-        XCTAssertEqual(corpusReport.failedExpectations, 1)
-        XCTAssertEqual(corpusReport.missingCharts, ["known-tone:easy"])
+        XCTAssertEqual(corpusReport.failedExpectations, 2)
+        XCTAssertEqual(corpusReport.missingCharts, ["known-tone:easy", "real-review-template:prototype"])
         XCTAssertEqual(corpusReport.results.count, 1)
+        XCTAssertEqual(corpusReport.lintIssues.count, 0)
 
         let reportText = corpusReport.renderText()
-        XCTAssertTrue(reportText.contains("corpus pass=1/2 failed=1 missing=1 tags=3"))
+        XCTAssertTrue(reportText.contains("corpus pass=1/3 failed=2 missing=2 tags=6 lint=0"))
+        XCTAssertTrue(reportText.contains("source_summary fixture_audio=1 real_clip=1"))
+        XCTAssertTrue(reportText.contains("review_summary awaiting_baseline_review=1 synthetic_smoke=1"))
+        XCTAssertTrue(reportText.contains("baseline_summary pending_review=1 prototype_fixture=1"))
         XCTAssertTrue(reportText.contains("tag_summary"))
         XCTAssertTrue(reportText.contains("fixture"))
         XCTAssertTrue(reportText.contains("smoke"))
         XCTAssertTrue(reportText.contains("synthetic"))
+        XCTAssertTrue(reportText.contains("real_clip"))
+        XCTAssertTrue(reportText.contains("regression"))
         XCTAssertTrue(reportText.contains("known-tone [prototype] PASS"))
         XCTAssertTrue(reportText.contains("score=1.00"))
         XCTAssertTrue(reportText.contains("source=known-tone.wav"))
         XCTAssertTrue(reportText.contains("source_type=fixture_audio"))
         XCTAssertTrue(reportText.contains("review=synthetic_smoke"))
+        XCTAssertTrue(reportText.contains("baseline=prototype_fixture"))
+        XCTAssertTrue(reportText.contains("provenance bundled XCTest fixture"))
         XCTAssertTrue(reportText.contains("lane_usage"))
         XCTAssertTrue(reportText.contains("measure_density m0=2"))
         XCTAssertTrue(reportText.contains("kick=1"))
@@ -184,7 +192,7 @@ final class PipelineRuntimeFixtureTests: XCTestCase {
         XCTAssertTrue(reportText.contains("note_preview"))
         XCTAssertTrue(reportText.contains("lane=kick") || reportText.contains("kick:vel="))
         XCTAssertTrue(reportText.contains("lane=snare") || reportText.contains("snare:vel="))
-        XCTAssertTrue(reportText.contains("missing known-tone:easy"))
+        XCTAssertTrue(reportText.contains("missing known-tone:easy, real-review-template:prototype"))
     }
 
     func testWorkerFallsBackToStdoutJSONWhenEnabled() async throws {
@@ -266,6 +274,107 @@ final class PipelineRuntimeFixtureTests: XCTestCase {
         XCTAssertTrue(note.contains(fixtureURL.absoluteString))
         XCTAssertTrue(note.contains(fixtureURL.path))
         XCTAssertTrue(note.contains(".json"))
+    }
+
+    func testValidateAudioAnalyzerWritesNormalizedArtifactWithoutQueueingJobs() throws {
+        let fixtureURL = try XCTUnwrap(Bundle.module.url(forResource: "known-tone", withExtension: "wav"))
+        let tempRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("masterofdrums-pipeline-tests", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+        let outputURL = tempRoot.appendingPathComponent("validated-analysis.json")
+        let analyzerCommand = #"""
+        test -f {input} >/dev/null
+        cat > {output} <<'JSON'
+        {"analysis":{"audioTrackCount":1,"confidence":0.88,"durationSeconds":1.0,"estimatedSegmentCount":1,"estimatedTempoBPM":123.0},"warnings":["validated"]}
+        JSON
+        """#
+        let runtime = makeRuntime(
+            databasePath: tempRoot.appendingPathComponent("pipeline.sqlite").path,
+            artifactRoot: tempRoot.appendingPathComponent("artifacts", isDirectory: true).path,
+            analyzerCommand: analyzerCommand
+        )
+
+        let result = try runtime.validateAudioAnalyzer(
+            sourceURI: fixtureURL.absoluteString,
+            sourceType: "file",
+            requestedBy: "test",
+            outputPath: outputURL.path
+        )
+
+        XCTAssertEqual(result.analysis.estimatedTempoBPM, 123.0)
+        XCTAssertEqual(result.warnings, ["validated"])
+        XCTAssertEqual(result.analysis.artifactURI, outputURL.absoluteString)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: outputURL.path))
+
+        let persisted = try decode(AudioAnalysisContract.self, from: String(decoding: Data(contentsOf: outputURL), as: UTF8.self))
+        XCTAssertEqual(persisted.analysis.artifactURI, outputURL.absoluteString)
+        XCTAssertEqual(persisted.source.sourceURI, fixtureURL.absoluteString)
+    }
+
+    func testWorkerCanDelegateThroughWrapperUsingBackendCommandEnvironmentVariable() async throws {
+        let fixtureURL = try XCTUnwrap(Bundle.module.url(forResource: "known-tone", withExtension: "wav"))
+        let tempRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("masterofdrums-pipeline-tests", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+        let backendScript = tempRoot.appendingPathComponent("backend-from-env.py")
+        try #"""
+import json
+import os
+import pathlib
+
+output_path = pathlib.Path(os.environ["PIPELINE_ANALYZER_OUTPUT_PATH"])
+output_path.write_text(json.dumps({
+    "analysis": {
+        "audioTrackCount": 1,
+        "durationSeconds": 1.0,
+        "estimatedSegmentCount": 1,
+        "estimatedTempoBPM": 111.0
+    },
+    "warnings": ["env-backend"]
+}), encoding="utf-8")
+"""#.write(to: backendScript, atomically: true, encoding: .utf8)
+
+        let wrapperPath = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("scripts", isDirectory: true)
+            .appendingPathComponent("analyzer-wrapper.py")
+            .path
+
+        let backendCommand = "python3 \(backendScript.path)"
+        setenv("PIPELINE_ANALYZER_BACKEND_COMMAND", backendCommand, 1)
+        defer { unsetenv("PIPELINE_ANALYZER_BACKEND_COMMAND") }
+
+        let analyzerCommand = "python3 \(shellQuote(wrapperPath)) --input {input} --output {output}"
+        let runtime = makeRuntime(
+            databasePath: tempRoot.appendingPathComponent("pipeline.sqlite").path,
+            artifactRoot: tempRoot.appendingPathComponent("artifacts", isDirectory: true).path,
+            analyzerCommand: analyzerCommand
+        )
+
+        try await runtime.run(
+            command: .enqueueAudioIngest(
+                sourceURI: fixtureURL.absoluteString,
+                sourceType: "file",
+                requestedBy: "test",
+                idempotencyKey: nil
+            )
+        )
+        try await runtime.run(command: .worker(stopAfterIdlePolls: 1))
+
+        let jobs = try await runtime.jobs.list(status: nil)
+        let analyzeJob = try XCTUnwrap(jobs.first(where: { $0.type == .audioAnalyze }))
+        let analysisResult = try decode(AudioAnalysisContract.self, from: analyzeJob.resultJSON)
+        XCTAssertEqual(analysisResult.analysis.estimatedTempoBPM, 111.0)
+        XCTAssertTrue(analysisResult.warnings.contains("env-backend"))
+        XCTAssertTrue(analysisResult.warnings.contains("analyzer wrapper delegated to backend command"))
     }
 
     func testWorkerNormalizesWrappedAnalyzerOutputWithDownbeatsAndMessyEventKeys() async throws {
