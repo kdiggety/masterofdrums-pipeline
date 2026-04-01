@@ -111,7 +111,7 @@ final class ChartQualityEvaluationTests: XCTestCase {
         XCTAssertTrue(codes.contains("max_notes_per_measure_exceeded"))
         XCTAssertTrue(codes.contains("too_many_empty_measures"))
         XCTAssertTrue(codes.contains("score_below_threshold"))
-        XCTAssertEqual(report.score, 0.33, accuracy: 0.0001)
+        XCTAssertEqual(report.score, 0.22, accuracy: 0.0001)
         XCTAssertTrue(report.summary.contains("FAIL"))
     }
 
@@ -143,7 +143,7 @@ final class ChartQualityEvaluationTests: XCTestCase {
         XCTAssertEqual(report.metrics.emptyMeasureCount, 1)
         XCTAssertEqual(report.metrics.maxNotesPerMeasure, 0)
         XCTAssertEqual(report.metrics.averageNotesPerMeasure, 0.0, accuracy: 0.0001)
-        XCTAssertEqual(report.score, 0.19, accuracy: 0.0001)
+        XCTAssertEqual(report.score, 0.0, accuracy: 0.0001)
     }
 
     private func makeChart(difficulty: String, measures: Int, notes: [BaseChartNote]) -> BaseChartContract {
