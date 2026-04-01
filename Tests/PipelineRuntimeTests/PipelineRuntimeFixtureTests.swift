@@ -28,9 +28,11 @@ final class PipelineRuntimeFixtureTests: XCTestCase {
             )
         )
 
-        let analyzerCommand = #"cat > {output} <<'JSON'
-{"analysis":{"audioTrackCount":1,"confidence":0.99,"downbeatOffsetSeconds":0.0,"durationSeconds":1.0,"estimatedSegmentCount":1,"estimatedTempoBPM":120.0},"note":"fixture analyzer output","segments":[{"confidence":0.99,"endSeconds":1.0,"index":0,"label":"full_track","startSeconds":0.0}],"warnings":[]}
-JSON"#
+        let analyzerCommand = #"""
+        cat > {output} <<'JSON'
+        {"analysis":{"audioTrackCount":1,"confidence":0.99,"downbeatOffsetSeconds":0.0,"durationSeconds":1.0,"estimatedSegmentCount":1,"estimatedTempoBPM":120.0},"note":"fixture analyzer output","segments":[{"confidence":0.99,"endSeconds":1.0,"index":0,"label":"full_track","startSeconds":0.0}],"warnings":[]}
+        JSON
+        """#
         setenv("PIPELINE_AUDIO_ANALYZER_COMMAND", analyzerCommand, 1)
         defer { unsetenv("PIPELINE_AUDIO_ANALYZER_COMMAND") }
 
