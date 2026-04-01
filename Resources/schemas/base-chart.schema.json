@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://masterofdrums.dev/schemas/base-chart.schema.json",
+  "title": "MasterOfDrums Base Chart",
+  "description": "Base gameplay chart artifact generated from normalized analysis. It keeps timing, lane, and source-traceability data while avoiding UI/editor-specific concerns.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "schemaURI",
+    "chartStage",
+    "status",
+    "source",
+    "chart",
+    "warnings",
+    "note"
+  ],
+  "properties": {
+    "schemaVersion": { "type": "string", "const": "1.0.0" },
+    "schemaURI": {
+      "type": "string",
+      "format": "uri",
+      "const": "https://masterofdrums.dev/schemas/base-chart.schema.json"
+    },
+    "chartStage": { "type": "string", "const": "base_chart_v1" },
+    "status": { "type": "string", "enum": ["completed", "partial", "failed"] },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["normalizedAnalysisArtifactURI", "sourceType", "sourceURI", "requestedBy"],
+      "properties": {
+        "normalizedAnalysisArtifactURI": { "type": "string", "format": "uri" },
+        "sourceType": { "type": "string", "minLength": 1 },
+        "sourceURI": { "type": "string", "minLength": 1 },
+        "requestedBy": { "type": "string", "minLength": 1 }
+      }
+    },
+    "chart": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["generatedAt", "ticksPerBeat", "offsetSeconds", "lanes", "difficulty", "measures", "notes"],
+      "properties": {
+        "generatedAt": { "type": "string", "format": "date-time" },
+        "ticksPerBeat": { "type": "integer", "minimum": 1 },
+        "offsetSeconds": { "type": "number" },
+        "lanes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/drumLane" },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "difficulty": { "type": "string", "minLength": 1 },
+        "measures": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/measure" }
+        },
+        "notes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/note" }
+        }
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "note": {
+      "type": ["string", "null"],
+      "minLength": 1
+    }
+  },
+  "$defs": {
+    "timeSignature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["numerator", "denominator"],
+      "properties": {
+        "numerator": { "type": "integer", "minimum": 1 },
+        "denominator": { "type": "integer", "enum": [1, 2, 4, 8, 16] }
+      }
+    },
+    "drumLane": {
+      "type": "string",
+      "enum": [
+        "kick",
+        "snare",
+        "hihat_closed",
+        "hihat_open",
+        "tom_low",
+        "tom_mid",
+        "tom_high",
+        "crash",
+        "ride",
+        "clap",
+        "percussion"
+      ]
+    },
+    "measure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["barIndex", "startBeatIndex", "beatCount", "timeSignature"],
+      "properties": {
+        "barIndex": { "type": "integer", "minimum": 0 },
+        "startBeatIndex": { "type": "integer", "minimum": 0 },
+        "beatCount": { "type": "integer", "minimum": 1 },
+        "timeSignature": { "$ref": "#/$defs/timeSignature" }
+      }
+    },
+    "note": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["noteID", "lane", "tick", "beatIndex", "startSeconds", "durationTicks"],
+      "properties": {
+        "noteID": { "type": "string", "minLength": 1 },
+        "lane": { "$ref": "#/$defs/drumLane" },
+        "tick": { "type": "integer", "minimum": 0 },
+        "beatIndex": { "type": "integer", "minimum": 0 },
+        "subdivisionIndex": { "type": ["integer", "null"], "minimum": 0 },
+        "startSeconds": { "type": "number", "minimum": 0 },
+        "durationTicks": { "type": "integer", "minimum": 0 },
+        "velocity": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "sourceEventID": { "type": ["string", "null"], "minLength": 1 }
+      }
+    }
+  }
+}

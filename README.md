@@ -137,8 +137,9 @@ Implemented so far:
 
 Still to implement:
 
-- real audio analyzer implementation behind the configured analyzer command
-- downstream consumers of persisted `audio_analysis` artifacts
+- concrete chart-generation analyzer wrappers behind the configured analyzer command
+- `chart_generate` production of `normalized_analysis` and `base_chart` artifacts
+- downstream chart validation/export built on those normalized contracts
 - broader fixture/integration coverage beyond the single known WAV path
 
 ## Current Testable Slice
@@ -184,4 +185,4 @@ Treat that as a transitional deployment shape until the pipeline moves to a netw
 
 Note: this assumes Swift and SQLite development libraries are available on the machine.
 
-See `Docs/architecture/standalone-pipeline-plan.md`, `Docs/database/sqlite-schema.md`, `Docs/interfaces/cli-interface-outline.md`, and `Docs/interfaces/audio-analysis-contract.md`.
+See `Docs/architecture/standalone-pipeline-plan.md`, `Docs/database/sqlite-schema.md`, `Docs/interfaces/cli-interface-outline.md`, `Docs/interfaces/audio-analysis-contract.md`, `Docs/interfaces/chart-generation-analyzer-stack.md`, and `Docs/interfaces/chart-generation-contract.md`.

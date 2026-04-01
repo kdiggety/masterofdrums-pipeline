@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://masterofdrums.dev/schemas/normalized-analysis-result.schema.json",
+  "title": "MasterOfDrums Normalized Analysis Result",
+  "description": "Normalized analysis artifact consumed by chart generation. It resolves timing into a beat grid and maps detector output into gameplay-oriented drum events.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "schemaURI",
+    "analysisStage",
+    "status",
+    "source",
+    "summary",
+    "beatGrid",
+    "drumEvents",
+    "warnings",
+    "note"
+  ],
+  "properties": {
+    "schemaVersion": { "type": "string", "const": "1.0.0" },
+    "schemaURI": {
+      "type": "string",
+      "format": "uri",
+      "const": "https://masterofdrums.dev/schemas/normalized-analysis-result.schema.json"
+    },
+    "analysisStage": { "type": "string", "const": "chart_generation_ready_v1" },
+    "status": { "type": "string", "enum": ["completed", "partial", "failed"] },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceType", "sourceURI", "requestedBy", "audioAnalysisArtifactURI"],
+      "properties": {
+        "sourceType": { "type": "string", "minLength": 1 },
+        "sourceURI": { "type": "string", "minLength": 1 },
+        "requestedBy": { "type": "string", "minLength": 1 },
+        "audioAnalysisArtifactURI": { "type": "string", "format": "uri" }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "normalizedAt",
+        "beatCount",
+        "barCount",
+        "drumEventCount",
+        "predominantTimeSignature"
+      ],
+      "properties": {
+        "normalizedAt": { "type": "string", "format": "date-time" },
+        "durationSeconds": { "type": ["number", "null"], "minimum": 0 },
+        "estimatedTempoBPM": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "downbeatOffsetSeconds": { "type": ["number", "null"], "minimum": 0 },
+        "beatCount": { "type": "integer", "minimum": 0 },
+        "barCount": { "type": "integer", "minimum": 0 },
+        "drumEventCount": { "type": "integer", "minimum": 0 },
+        "predominantTimeSignature": { "$ref": "#/$defs/timeSignature" },
+        "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }
+      }
+    },
+    "beatGrid": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/beatGridEvent" }
+    },
+    "drumEvents": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/drumEvent" }
+    },
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "note": {
+      "type": ["string", "null"],
+      "minLength": 1
+    }
+  },
+  "$defs": {
+    "timeSignature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["numerator", "denominator"],
+      "properties": {
+        "numerator": { "type": "integer", "minimum": 1 },
+        "denominator": { "type": "integer", "enum": [1, 2, 4, 8, 16] }
+      }
+    },
+    "drumLane": {
+      "type": "string",
+      "enum": [
+        "kick",
+        "snare",
+        "hihat_closed",
+        "hihat_open",
+        "tom_low",
+        "tom_mid",
+        "tom_high",
+        "crash",
+        "ride",
+        "clap",
+        "percussion"
+      ]
+    },
+    "beatGridEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "beatIndex",
+        "barIndex",
+        "beatInBar",
+        "subdivisionIndex",
+        "subdivisionInBeat",
+        "startSeconds",
+        "isDownbeat"
+      ],
+      "properties": {
+        "beatIndex": { "type": "integer", "minimum": 0 },
+        "barIndex": { "type": "integer", "minimum": 0 },
+        "beatInBar": { "type": "integer", "minimum": 1 },
+        "subdivisionIndex": { "type": "integer", "minimum": 0 },
+        "subdivisionInBeat": { "type": "integer", "minimum": 0 },
+        "startSeconds": { "type": "number", "minimum": 0 },
+        "durationSeconds": { "type": ["number", "null"], "minimum": 0 },
+        "isDownbeat": { "type": "boolean" },
+        "tempoBPM": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "timeSignature": {
+          "oneOf": [
+            { "$ref": "#/$defs/timeSignature" },
+            { "type": "null" }
+          ]
+        },
+        "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }
+      }
+    },
+    "drumEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["eventID", "onsetSeconds", "lane"],
+      "properties": {
+        "eventID": { "type": "string", "minLength": 1 },
+        "onsetSeconds": { "type": "number", "minimum": 0 },
+        "onsetBeatIndex": { "type": ["integer", "null"], "minimum": 0 },
+        "onsetSubdivisionIndex": { "type": ["integer", "null"], "minimum": 0 },
+        "lane": { "$ref": "#/$defs/drumLane" },
+        "velocity": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "sourceLabel": { "type": ["string", "null"], "minLength": 1 },
+        "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }
+      }
+    }
+  }
+}
