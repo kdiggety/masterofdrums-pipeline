@@ -40,7 +40,11 @@ public struct NormalizedAnalysisContract: Codable, Sendable {
     }
 }
 
-extension NormalizedAnalysisContract: JSONStringEncodable {}
+extension NormalizedAnalysisContract: JSONStringEncodable {
+    public func write(to url: URL) throws {
+        try toJSONString().write(to: url, atomically: true, encoding: .utf8)
+    }
+}
 
 public struct NormalizedAnalysisSource: Codable, Sendable {
     public let sourceType: String
@@ -221,7 +225,11 @@ public struct BaseChartContract: Codable, Sendable {
     }
 }
 
-extension BaseChartContract: JSONStringEncodable {}
+extension BaseChartContract: JSONStringEncodable {
+    public func write(to url: URL) throws {
+        try toJSONString().write(to: url, atomically: true, encoding: .utf8)
+    }
+}
 
 public struct BaseChartSource: Codable, Sendable {
     public let normalizedAnalysisArtifactURI: String

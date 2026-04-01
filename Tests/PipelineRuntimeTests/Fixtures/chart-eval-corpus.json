@@ -1,0 +1,23 @@
+{
+  "schemaVersion": "1.0.0",
+  "songs": [
+    {
+      "id": "known-tone",
+      "title": "Known Tone Fixture",
+      "artist": "Test Fixture",
+      "sourceFixture": "known-tone.wav",
+      "notes": "Minimal smoke-test corpus entry. This is intentionally synthetic and should grow into a small representative song set.",
+      "expectations": [
+        {
+          "difficulty": "easy",
+          "noteCountRange": { "min": 1, "max": 8 },
+          "measureCountRange": { "min": 1, "max": 4 },
+          "requiredLanes": ["kick"],
+          "allowedLanes": ["kick", "snare", "hihat_closed"],
+          "maxSimultaneousNotes": 1,
+          "maxNotesPerBeat": 2
+        }
+      ]
+    }
+  ]
+}

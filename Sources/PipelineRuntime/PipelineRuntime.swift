@@ -255,7 +255,9 @@ public struct PipelineRuntime {
             return try await executeAudioIngest(job: job, now: now)
         case .audioAnalyze:
             return try await executeAudioAnalyze(job: job, now: now)
-        case .chartGenerate, .chartValidate, .chartExport:
+        case .chartGenerate:
+            return try await executeChartGenerate(job: job, now: now)
+        case .chartValidate, .chartExport:
             throw PipelineRuntimeError.unsupportedJobType(job.type.rawValue)
         }
     }
@@ -408,7 +410,93 @@ public struct PipelineRuntime {
             ],
             createdAt: now
         )
+
+        let chartGenerateJob = try await enqueueChartGenerateFollowUp(
+            for: job,
+            payload: payload,
+            audioAnalysisArtifactURI: outputURL.absoluteString,
+            createdAt: now
+        )
+        try await appendEvent(
+            workflowID: job.workflowID,
+            jobID: job.id,
+            eventType: "chart_generate_enqueued",
+            message: "Enqueued follow-up chart_generate job \(chartGenerateJob.id)",
+            details: [
+                "next_job_id": AnySendable(chartGenerateJob.id),
+                "next_job_type": AnySendable(chartGenerateJob.type.rawValue),
+                "audio_analysis_artifact_uri": AnySendable(outputURL.absoluteString)
+            ],
+            createdAt: now
+        )
         return analysis.toJSONString()
+    }
+
+    private func executeChartGenerate(job: PipelineJob, now: Date) async throws -> String {
+        let payload = try decodeChartGeneratePayload(from: job.payloadJSON)
+        let analysisURL = try resolveLocalFileURL(from: payload.audioAnalysisArtifactURI)
+        let data = try Data(contentsOf: analysisURL)
+        let audioAnalysis = try JSONDecoder.pipeline.decode(AudioAnalysisContract.self, from: data)
+
+        let normalizedOutputURL = try prepareArtifactOutputURL(category: "normalized-analysis", workflowID: job.workflowID, jobID: job.id, createdAt: now)
+        let baseChartOutputURL = try prepareArtifactOutputURL(category: "base-chart", workflowID: job.workflowID, jobID: job.id, createdAt: now)
+
+        let generated = ChartGenerator.generate(from: audioAnalysis, generatedAt: now, normalizedAnalysisArtifactURI: normalizedOutputURL.absoluteString)
+        try generated.normalized.write(to: normalizedOutputURL)
+        try generated.baseChart.write(to: baseChartOutputURL)
+
+        try await artifacts.insert(
+            ArtifactRecord(
+                workflowID: job.workflowID,
+                jobID: job.id,
+                artifactType: "normalized_analysis",
+                uri: normalizedOutputURL.absoluteString,
+                contentType: "application/json",
+                checksum: try Self.sha256Hex(for: normalizedOutputURL),
+                metadataJSON: generated.normalized.summary.toJSONString(),
+                createdAt: now
+            )
+        )
+        try await artifacts.insert(
+            ArtifactRecord(
+                workflowID: job.workflowID,
+                jobID: job.id,
+                artifactType: "base_chart",
+                uri: baseChartOutputURL.absoluteString,
+                contentType: "application/json",
+                checksum: try Self.sha256Hex(for: baseChartOutputURL),
+                metadataJSON: Self.baseChartMetadataJSON(from: generated.baseChart),
+                createdAt: now
+            )
+        )
+
+        try await appendEvent(
+            workflowID: job.workflowID,
+            jobID: job.id,
+            eventType: "normalized_analysis_created",
+            message: "Normalized analysis artifact persisted",
+            details: [
+                "artifact_uri": AnySendable(normalizedOutputURL.absoluteString),
+                "beat_count": AnySendable(generated.normalized.summary.beatCount),
+                "bar_count": AnySendable(generated.normalized.summary.barCount),
+                "drum_event_count": AnySendable(generated.normalized.summary.drumEventCount)
+            ],
+            createdAt: now
+        )
+        try await appendEvent(
+            workflowID: job.workflowID,
+            jobID: job.id,
+            eventType: "base_chart_created",
+            message: "Base chart artifact persisted",
+            details: [
+                "artifact_uri": AnySendable(baseChartOutputURL.absoluteString),
+                "measure_count": AnySendable(generated.baseChart.chart.measures.count),
+                "note_count": AnySendable(generated.baseChart.chart.notes.count),
+                "lane_count": AnySendable(generated.baseChart.chart.lanes.count)
+            ],
+            createdAt: now
+        )
+        return generated.baseChart.toJSONString()
     }
 
     private func enqueueAudioAnalyzeFollowUp(for job: PipelineJob, payload: AudioIngestPayload, createdAt: Date) async throws -> PipelineJob {
@@ -437,6 +525,34 @@ public struct PipelineRuntime {
         return analyzeJob
     }
 
+    private func enqueueChartGenerateFollowUp(for job: PipelineJob, payload: AudioAnalyzePayload, audioAnalysisArtifactURI: String, createdAt: Date) async throws -> PipelineJob {
+        let useCase = SubmitChartGenerateJob(jobs: jobs)
+        let chartGenerateJob = try await useCase.execute(
+            EnqueueChartGenerateRequest(
+                workflowID: job.workflowID,
+                sourceURI: payload.sourceURI,
+                sourceType: payload.sourceType,
+                requestedBy: payload.requestedBy,
+                audioAnalysisArtifactURI: audioAnalysisArtifactURI
+            )
+        )
+        try await appendEvent(
+            workflowID: job.workflowID,
+            jobID: chartGenerateJob.id,
+            eventType: "job_enqueued",
+            message: "Chart generate job enqueued",
+            details: [
+                "source_uri": AnySendable(payload.sourceURI),
+                "source_type": AnySendable(payload.sourceType),
+                "requested_by": AnySendable(payload.requestedBy),
+                "audio_analysis_artifact_uri": AnySendable(audioAnalysisArtifactURI),
+                "trigger_job_id": AnySendable(job.id)
+            ],
+            createdAt: createdAt
+        )
+        return chartGenerateJob
+    }
+
     private func decodeAudioIngestPayload(from json: String) throws -> AudioIngestPayload {
         let data = Data(json.utf8)
         return try JSONDecoder().decode(AudioIngestPayload.self, from: data)
@@ -447,6 +563,11 @@ public struct PipelineRuntime {
         return try JSONDecoder().decode(AudioAnalyzePayload.self, from: data)
     }
 
+    private func decodeChartGeneratePayload(from json: String) throws -> ChartGeneratePayload {
+        let data = Data(json.utf8)
+        return try JSONDecoder().decode(ChartGeneratePayload.self, from: data)
+    }
+
     private func resolveLocalFileURL(from sourceURI: String) throws -> URL {
         if sourceURI.hasPrefix("file://"), let url = URL(string: sourceURI), url.isFileURL {
             return url
@@ -455,9 +576,13 @@ public struct PipelineRuntime {
     }
 
     private func prepareArtifactOutputURL(workflowID: String, jobID: String, createdAt: Date) throws -> URL {
+        try prepareArtifactOutputURL(category: "audio-analysis", workflowID: workflowID, jobID: jobID, createdAt: createdAt)
+    }
+
+    private func prepareArtifactOutputURL(category: String, workflowID: String, jobID: String, createdAt: Date) throws -> URL {
         let rootURL = URL(fileURLWithPath: database.configuration.artifactRoot, isDirectory: true)
         let directoryURL = rootURL
-            .appendingPathComponent("audio-analysis", isDirectory: true)
+            .appendingPathComponent(category, isDirectory: true)
             .appendingPathComponent(workflowID, isDirectory: true)
         try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
         let stamp = Self.filenameTimestamp(createdAt)
@@ -520,6 +645,25 @@ public struct PipelineRuntime {
             createdAt: createdAt
         )
         try await events.append(event)
+    }
+
+    private static func baseChartMetadataJSON(from chart: BaseChartContract) -> String {
+        struct BaseChartMetadata: Encodable {
+            let difficulty: String
+            let ticksPerBeat: Int
+            let measureCount: Int
+            let noteCount: Int
+            let laneCount: Int
+        }
+        let metadata = BaseChartMetadata(
+            difficulty: chart.chart.difficulty,
+            ticksPerBeat: chart.chart.ticksPerBeat,
+            measureCount: chart.chart.measures.count,
+            noteCount: chart.chart.notes.count,
+            laneCount: chart.chart.lanes.count
+        )
+        guard let data = try? JSONEncoder.pipeline.encode(metadata) else { return "{}" }
+        return String(decoding: data, as: UTF8.self)
     }
 
     private func nextRetryDate(for job: PipelineJob, from completedAt: Date) -> Date? {

@@ -10,7 +10,7 @@ import PipelineDomain
 import PipelineInfrastructure
 
 final class PipelineRuntimeFixtureTests: XCTestCase {
-    func testWorkerProcessesKnownWAVFixtureThroughAnalyzeStage() async throws {
+    func testWorkerProcessesKnownWAVFixtureThroughChartGenerationStage() async throws {
         let fixtureURL = try XCTUnwrap(Bundle.module.url(forResource: "known-tone", withExtension: "wav"))
         let tempRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("masterofdrums-pipeline-tests", isDirectory: true)
@@ -30,7 +30,7 @@ final class PipelineRuntimeFixtureTests: XCTestCase {
 
         let analyzerCommand = #"""
         cat > {output} <<'JSON'
-        {"analysis":{"audioTrackCount":1,"confidence":0.99,"downbeatOffsetSeconds":0.0,"durationSeconds":1.0,"estimatedSegmentCount":1,"estimatedTempoBPM":120.0},"note":"fixture analyzer output","segments":[{"confidence":0.99,"endSeconds":1.0,"index":0,"label":"full_track","startSeconds":0.0}],"warnings":[]}
+        {"analysis":{"audioTrackCount":1,"confidence":0.99,"downbeatOffsetSeconds":0.0,"durationSeconds":1.0,"estimatedSegmentCount":1,"estimatedTempoBPM":120.0},"beats":[0.0,0.5,1.0],"drumEvents":[{"confidence":0.9,"eventID":"kick-1","label":"kick","onsetSeconds":0.0,"velocity":1.0},{"confidence":0.8,"eventID":"snare-1","label":"snare","onsetSeconds":0.5,"velocity":0.7}],"note":"fixture analyzer output","segments":[{"confidence":0.99,"endSeconds":1.0,"index":0,"label":"full_track","startSeconds":0.0}],"warnings":[]}
         JSON
         """#
         setenv("PIPELINE_AUDIO_ANALYZER_COMMAND", analyzerCommand, 1)
@@ -47,15 +47,17 @@ final class PipelineRuntimeFixtureTests: XCTestCase {
         try await runtime.run(command: .worker(stopAfterIdlePolls: 1))
 
         let jobs = try await runtime.jobs.list(status: nil)
-        XCTAssertEqual(jobs.count, 2)
-        XCTAssertTrue(jobs.allSatisfy { $0.status == .succeeded }, "expected ingest and analyze jobs to succeed")
+        XCTAssertEqual(jobs.count, 3)
+        XCTAssertTrue(jobs.allSatisfy { $0.status == .succeeded }, "expected ingest, analyze, and chart generate jobs to succeed")
 
         let ingestJob = try XCTUnwrap(jobs.first(where: { $0.type == .audioIngest }))
         let analyzeJob = try XCTUnwrap(jobs.first(where: { $0.type == .audioAnalyze }))
+        let chartGenerateJob = try XCTUnwrap(jobs.first(where: { $0.type == .chartGenerate }))
         XCTAssertEqual(ingestJob.workflowID, analyzeJob.workflowID)
+        XCTAssertEqual(analyzeJob.workflowID, chartGenerateJob.workflowID)
 
         let artifacts = try await runtime.artifacts.list(workflowID: ingestJob.workflowID, jobID: nil, limit: 10)
-        XCTAssertEqual(Set(artifacts.map(\.artifactType)), ["source_audio", "audio_analysis"])
+        XCTAssertEqual(Set(artifacts.map(\.artifactType)), ["source_audio", "audio_analysis", "normalized_analysis", "base_chart"])
 
         let sourceArtifact = try XCTUnwrap(artifacts.first(where: { $0.artifactType == "source_audio" }))
         XCTAssertEqual(sourceArtifact.uri, fixtureURL.absoluteString)
@@ -97,6 +99,26 @@ final class PipelineRuntimeFixtureTests: XCTestCase {
         let persistedAnalysis = try decode(AudioAnalysisContract.self, from: String(decoding: Data(contentsOf: analysisArtifactURL), as: UTF8.self))
         XCTAssertEqual(persistedAnalysis.analysis.artifactURI, analysisArtifact.uri)
         XCTAssertEqual(persistedAnalysis.segments.count, 1)
+
+        let normalizedArtifact = try XCTUnwrap(artifacts.first(where: { $0.artifactType == "normalized_analysis" }))
+        let normalizedArtifactURL = try XCTUnwrap(URL(string: normalizedArtifact.uri))
+        let persistedNormalized = try decode(NormalizedAnalysisContract.self, from: String(decoding: Data(contentsOf: normalizedArtifactURL), as: UTF8.self))
+        XCTAssertEqual(persistedNormalized.source.audioAnalysisArtifactURI, analysisArtifact.uri)
+        XCTAssertEqual(persistedNormalized.summary.beatCount, 3)
+        XCTAssertEqual(persistedNormalized.summary.barCount, 1)
+        XCTAssertEqual(persistedNormalized.drumEvents.count, 2)
+        XCTAssertEqual(persistedNormalized.beatGrid.first?.startSeconds, 0.0, accuracy: 0.001)
+
+        let baseChartArtifact = try XCTUnwrap(artifacts.first(where: { $0.artifactType == "base_chart" }))
+        let baseChartArtifactURL = try XCTUnwrap(URL(string: baseChartArtifact.uri))
+        let persistedBaseChart = try decode(BaseChartContract.self, from: String(decoding: Data(contentsOf: baseChartArtifactURL), as: UTF8.self))
+        XCTAssertEqual(persistedBaseChart.source.normalizedAnalysisArtifactURI, normalizedArtifact.uri)
+        XCTAssertEqual(persistedBaseChart.chart.difficulty, "prototype")
+        XCTAssertEqual(persistedBaseChart.chart.ticksPerBeat, 480)
+        XCTAssertEqual(persistedBaseChart.chart.measures.count, 1)
+        XCTAssertTrue(persistedBaseChart.chart.lanes.contains(.kick))
+        XCTAssertTrue(persistedBaseChart.chart.lanes.contains(.snare))
+        XCTAssertEqual(persistedBaseChart.chart.notes.count, 2)
     }
 
     private func decode<T: Decodable>(_ type: T.Type, from json: String?) throws -> T {

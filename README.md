@@ -138,9 +138,10 @@ Implemented so far:
 Still to implement:
 
 - concrete chart-generation analyzer wrappers behind the configured analyzer command
-- `chart_generate` production of `normalized_analysis` and `base_chart` artifacts
-- downstream chart validation/export built on those normalized contracts
+- richer analyzer outputs that include beat/downbeat arrays and lane-level drum-event candidates
+- downstream chart validation/export built on the normalized chart-generation artifacts
 - broader fixture/integration coverage beyond the single known WAV path
+- a runnable corpus-driven quality loop that scores generated charts against song expectations
 
 ## Current Testable Slice
 
@@ -185,4 +186,4 @@ Treat that as a transitional deployment shape until the pipeline moves to a netw
 
 Note: this assumes Swift and SQLite development libraries are available on the machine.
 
-See `Docs/architecture/standalone-pipeline-plan.md`, `Docs/database/sqlite-schema.md`, `Docs/interfaces/cli-interface-outline.md`, `Docs/interfaces/audio-analysis-contract.md`, `Docs/interfaces/chart-generation-analyzer-stack.md`, and `Docs/interfaces/chart-generation-contract.md`.
+See `Docs/architecture/standalone-pipeline-plan.md`, `Docs/database/sqlite-schema.md`, `Docs/interfaces/cli-interface-outline.md`, `Docs/interfaces/audio-analysis-contract.md`, `Docs/interfaces/chart-generation-analyzer-stack.md`, `Docs/interfaces/chart-generation-contract.md`, and `Docs/quality/chart-quality-evaluation.md`.

@@ -165,3 +165,75 @@ public struct AudioAnalyzePayload: Codable, Sendable {
         return String(decoding: data, as: UTF8.self)
     }
 }
+
+public struct EnqueueChartGenerateRequest: Sendable {
+    public let workflowID: String
+    public let sourceURI: String
+    public let sourceType: String
+    public let requestedBy: String
+    public let audioAnalysisArtifactURI: String
+    public let maxAttempts: Int
+
+    public init(
+        workflowID: String,
+        sourceURI: String,
+        sourceType: String,
+        requestedBy: String,
+        audioAnalysisArtifactURI: String,
+        maxAttempts: Int = 5
+    ) {
+        self.workflowID = workflowID
+        self.sourceURI = sourceURI
+        self.sourceType = sourceType
+        self.requestedBy = requestedBy
+        self.audioAnalysisArtifactURI = audioAnalysisArtifactURI
+        self.maxAttempts = maxAttempts
+    }
+}
+
+public struct SubmitChartGenerateJob {
+    public let jobs: JobStore
+
+    public init(jobs: JobStore) {
+        self.jobs = jobs
+    }
+
+    public func execute(_ request: EnqueueChartGenerateRequest) async throws -> PipelineJob {
+        let payload = ChartGeneratePayload(
+            sourceType: request.sourceType,
+            sourceURI: request.sourceURI,
+            requestedBy: request.requestedBy,
+            audioAnalysisArtifactURI: request.audioAnalysisArtifactURI
+        )
+        let job = PipelineJob(
+            workflowID: request.workflowID,
+            type: .chartGenerate,
+            status: .queued,
+            maxAttempts: request.maxAttempts,
+            payloadJSON: payload.toJSONString()
+        )
+        try await jobs.enqueue(job)
+        return job
+    }
+}
+
+public struct ChartGeneratePayload: Codable, Sendable {
+    public let sourceType: String
+    public let sourceURI: String
+    public let requestedBy: String
+    public let audioAnalysisArtifactURI: String
+
+    public init(sourceType: String, sourceURI: String, requestedBy: String, audioAnalysisArtifactURI: String) {
+        self.sourceType = sourceType
+        self.sourceURI = sourceURI
+        self.requestedBy = requestedBy
+        self.audioAnalysisArtifactURI = audioAnalysisArtifactURI
+    }
+
+    public func toJSONString() -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(self) else { return "{}" }
+        return String(decoding: data, as: UTF8.self)
+    }
+}

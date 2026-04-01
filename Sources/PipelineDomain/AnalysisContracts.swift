@@ -191,6 +191,16 @@ public enum RawJSONValue: Codable, Sendable {
             return .null
         }
     }
+
+    public var dictionary: [String: RawJSONValue]? {
+        if case .object(let value) = self { return value }
+        return nil
+    }
+
+    public var array: [RawJSONValue]? {
+        if case .array(let value) = self { return value }
+        return nil
+    }
 }
 
 private func double(_ value: Any?) -> Double? {

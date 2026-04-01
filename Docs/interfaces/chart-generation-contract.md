@@ -239,17 +239,21 @@ This proposal is backed by:
 - `Sources/PipelineDomain/ChartContracts.swift`
 - `Resources/schemas/normalized-analysis-result.schema.json`
 - `Resources/schemas/base-chart.schema.json`
+- `Sources/PipelineRuntime/PipelineRuntime.swift`
 
-Those files define the initial contract shape without forcing a worker implementation yet.
+The runtime now produces `normalized_analysis` and `base_chart` artifacts during `chart_generate`.
+For the current slice, it prefers richer analyzer output when present (beat arrays / drum-event candidates inside `rawAnalyzerOutput`) and otherwise falls back to a deterministic tempo-derived beat grid so downstream validation/export can start against stable artifacts now.
 
 ## Recommended next implementation step
 
-When story 3 starts, `chart_generate` should:
+The current runtime now produces `normalized_analysis` and `base_chart` during `chart_generate`.
 
-1. load the upstream `audio_analysis` artifact
-2. build and persist a `normalized_analysis` artifact
-3. quantize that into a persisted `base_chart` artifact
-4. store compact `metadata_json` summaries for both
-5. emit workflow events for both artifact creations
+The next refinement step should be to improve the quality of those artifacts by:
 
-That will give `chart_validate` a clean, deterministic input instead of making validation depend on raw analyzer output.
+1. replacing fallback tempo-derived beat grids with richer analyzer-provided beat/downbeat arrays whenever available
+2. improving drum-event normalization and lane mapping from analyzer output
+3. tightening quantization from coarse beat anchoring to subdivision-aware placement
+4. feeding generated `base_chart` artifacts into the chart-quality evaluation loop
+5. preparing `chart_validate` to consume the persisted `base_chart` artifact directly
+
+That keeps `chart_validate` deterministic while moving chart generation from heuristic scaffolding toward analyzer-driven output.
