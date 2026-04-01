@@ -22,6 +22,7 @@ final class PipelineRuntimeFixtureTests: XCTestCase {
         let artifactRoot = tempRoot.appendingPathComponent("artifacts", isDirectory: true).path
 
         let analyzerCommand = #"""
+        test -f {input} >/dev/null
         cat > {output} <<'JSON'
         {"analysis":{"audioTrackCount":1,"confidence":0.99,"downbeatOffsetSeconds":0.0,"durationSeconds":1.0,"estimatedSegmentCount":1,"estimatedTempoBPM":120.0},"beats":[0.0,0.5,1.0],"drumEvents":[{"confidence":0.9,"eventID":"kick-1","label":"kick","onsetSeconds":0.0,"velocity":1.0},{"confidence":0.8,"eventID":"snare-1","label":"snare","onsetSeconds":0.5,"velocity":0.7}],"note":"fixture analyzer output","segments":[{"confidence":0.99,"endSeconds":1.0,"index":0,"label":"full_track","startSeconds":0.0}],"warnings":[]}
         JSON
@@ -124,6 +125,7 @@ final class PipelineRuntimeFixtureTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: tempRoot) }
 
         let analyzerCommand = #"""
+        test -f {input} >/dev/null
         cat > {output} <<'JSON'
         {"analysis":{"audioTrackCount":1,"confidence":0.99,"downbeatOffsetSeconds":0.0,"durationSeconds":1.0,"estimatedSegmentCount":1,"estimatedTempoBPM":120.0},"beats":[0.0,0.5,1.0],"drumEvents":[{"confidence":0.9,"eventID":"kick-1","label":"kick","onsetSeconds":0.0,"velocity":1.0},{"confidence":0.8,"eventID":"snare-1","label":"snare","onsetSeconds":0.5,"velocity":0.7}],"note":"fixture analyzer output","segments":[{"confidence":0.99,"endSeconds":1.0,"index":0,"label":"full_track","startSeconds":0.0}],"warnings":[]}
         JSON
@@ -182,6 +184,7 @@ final class PipelineRuntimeFixtureTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: tempRoot) }
 
         let analyzerCommand = #"""
+        test -f {input} >/dev/null
         rm -f {output}
         printf '{"analysis":{"audioTrackCount":1,"durationSeconds":1.0,"estimatedSegmentCount":1,"estimatedTempoBPM":120.0},"warnings":["stdout-json"]}'
         """#
@@ -220,6 +223,7 @@ final class PipelineRuntimeFixtureTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: tempRoot) }
 
         let analyzerCommand = #"""
+        test -f {input} >/dev/null
         cat > {output} <<JSON
         {"analysis":{"audioTrackCount":1,"durationSeconds":1.0,"estimatedSegmentCount":1},"note":"'$PIPELINE_ANALYZER_WORKFLOW_ID|$PIPELINE_ANALYZER_JOB_ID|$PIPELINE_ANALYZER_REQUESTED_BY|$PIPELINE_ANALYZER_SOURCE_URI|$PIPELINE_ANALYZER_INPUT_PATH|$PIPELINE_ANALYZER_OUTPUT_PATH'"}
         JSON
@@ -261,6 +265,7 @@ final class PipelineRuntimeFixtureTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: tempRoot) }
 
         let analyzerCommand = #"""
+        test -f {input} >/dev/null
         cat > {output} <<'JSON'
         {"result":{"timing":{"beats":[{"time":0.25},{"time":0.75},{"time":1.25},{"time":1.75},{"time":2.25}],"downbeats":[0.25,2.25]},"drums":{"hits":[{"id":"evt-1","time_seconds":0.24,"instrument":"bass drum","velocity":0.98,"probability":0.91},{"id":"evt-2","time_seconds":0.76,"class":"snare","strength":0.77,"score":0.82},{"id":"evt-3","start_seconds":1.74,"type":"closed hi hat","amplitude":0.55,"confidence":0.7}]},"analysis":{"audioTrackCount":1,"confidence":0.95,"durationSeconds":2.3,"estimatedSegmentCount":1,"estimatedTempoBPM":120.0}},"note":"wrapped analyzer output","warnings":[]}
         JSON
