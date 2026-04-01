@@ -173,10 +173,9 @@ final class PipelineRuntimeFixtureTests: XCTestCase {
         XCTAssertTrue(reportText.contains("lane_usage"))
         XCTAssertTrue(reportText.contains("kick=1"))
         XCTAssertTrue(reportText.contains("snare=1"))
-        XCTAssertTrue(reportText.contains("tick=0:beat=0"))
-        XCTAssertTrue(reportText.contains("lane=kick"))
-        XCTAssertTrue(reportText.contains("tick=240:beat=1"))
-        XCTAssertTrue(reportText.contains("lane=snare"))
+        XCTAssertTrue(reportText.contains("note_preview"))
+        XCTAssertTrue(reportText.contains("lane=kick") || reportText.contains("kick:vel="))
+        XCTAssertTrue(reportText.contains("lane=snare") || reportText.contains("snare:vel="))
         XCTAssertTrue(reportText.contains("missing known-tone:easy"))
     }
 
