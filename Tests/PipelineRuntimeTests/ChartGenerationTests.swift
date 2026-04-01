@@ -46,7 +46,7 @@ final class ChartGenerationTests: XCTestCase {
 
         XCTAssertEqual(generated.normalized.drumEvents.count, 1)
         XCTAssertEqual(generated.normalized.drumEvents[0].lane, .tomLow)
-        XCTAssertEqual(generated.baseChart.chart.notes[0].velocity, 1.0, accuracy: 0.0001)
+        XCTAssertEqual(try XCTUnwrap(generated.baseChart.chart.notes[0].velocity), 1.0, accuracy: 0.0001)
         XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("without onset timing") }))
         XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("unmapped lanes") }))
         XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("Mapped 1 of 3 analyzer drum-event candidates") }))
