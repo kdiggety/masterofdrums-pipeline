@@ -312,13 +312,11 @@ final class PipelineRuntimeFixtureTests: XCTestCase {
                 artifactRoot: artifactRoot,
                 autoMigrate: true
             ),
-            audioAnalyzerConfigurationProvider: {
-                AudioAnalyzerConfiguration(
-                    commandTemplate: analyzerCommand,
-                    timeoutSeconds: nil,
-                    acceptsStdoutJSON: acceptsStdoutJSON
-                )
-            }
+            audioAnalyzerConfiguration: AudioAnalyzerConfiguration(
+                commandTemplate: analyzerCommand,
+                timeoutSeconds: nil,
+                acceptsStdoutJSON: acceptsStdoutJSON
+            )
         )
     }
 

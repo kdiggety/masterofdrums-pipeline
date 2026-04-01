@@ -28,11 +28,11 @@ public struct PipelineRuntime {
     public let events: WorkflowEventStore
     public let artifacts: ArtifactStore
     public let jobs: JobStore
-    private let audioAnalyzerConfigurationProvider: @Sendable () -> AudioAnalyzerConfiguration
+    private let audioAnalyzerConfiguration: AudioAnalyzerConfiguration
 
     public init(
         configuration: SQLiteConfiguration = .fromEnvironment(),
-        audioAnalyzerConfigurationProvider: @escaping @Sendable () -> AudioAnalyzerConfiguration = { AudioAnalyzerConfiguration.fromEnvironment() }
+        audioAnalyzerConfiguration: AudioAnalyzerConfiguration = .fromEnvironment()
     ) {
         let database = SQLiteDatabase(configuration: configuration)
         self.database = database
@@ -41,7 +41,7 @@ public struct PipelineRuntime {
         self.events = SQLiteWorkflowEventStore(database: database)
         self.artifacts = SQLiteArtifactStore(database: database)
         self.jobs = SQLiteJobStore(database: database)
-        self.audioAnalyzerConfigurationProvider = audioAnalyzerConfigurationProvider
+        self.audioAnalyzerConfiguration = audioAnalyzerConfiguration
     }
 
     public func run(command: PipelineCLICommand) async throws {
@@ -356,7 +356,7 @@ public struct PipelineRuntime {
             throw PipelineRuntimeError.sourceNotFound(payload.sourceURI)
         }
 
-        let analyzer = audioAnalyzerConfigurationProvider()
+        let analyzer = audioAnalyzerConfiguration
         guard analyzer.isEnabled else {
             throw PipelineRuntimeError.audioAnalyzerNotConfigured
         }
