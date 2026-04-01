@@ -968,11 +968,12 @@ public struct AudioAnalyzerConfiguration: Sendable {
         return !trimmed.isEmpty && trimmed.contains("{input}") && trimmed.contains("{output}")
     }
 
-    public static func fromEnvironment(_ environment: [String: String] = ProcessInfo.processInfo.environment) -> AudioAnalyzerConfiguration {
-        AudioAnalyzerConfiguration(
-            commandTemplate: environment["PIPELINE_AUDIO_ANALYZER_COMMAND"] ?? "",
-            timeoutSeconds: environment["PIPELINE_AUDIO_ANALYZER_TIMEOUT_SECONDS"].flatMap(TimeInterval.init),
-            acceptsStdoutJSON: Self.boolFlag(environment["PIPELINE_AUDIO_ANALYZER_STDOUT_JSON"])
+    public static func fromEnvironment(_ environment: [String: String]? = nil) -> AudioAnalyzerConfiguration {
+        let resolved = environment ?? Self.liveEnvironment()
+        return AudioAnalyzerConfiguration(
+            commandTemplate: resolved["PIPELINE_AUDIO_ANALYZER_COMMAND"] ?? "",
+            timeoutSeconds: resolved["PIPELINE_AUDIO_ANALYZER_TIMEOUT_SECONDS"].flatMap(TimeInterval.init),
+            acceptsStdoutJSON: Self.boolFlag(resolved["PIPELINE_AUDIO_ANALYZER_STDOUT_JSON"])
         )
     }
 
