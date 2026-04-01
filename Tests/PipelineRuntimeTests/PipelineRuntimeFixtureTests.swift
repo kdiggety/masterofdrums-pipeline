@@ -107,7 +107,7 @@ final class PipelineRuntimeFixtureTests: XCTestCase {
         XCTAssertEqual(persistedNormalized.summary.beatCount, 3)
         XCTAssertEqual(persistedNormalized.summary.barCount, 1)
         XCTAssertEqual(persistedNormalized.drumEvents.count, 2)
-        XCTAssertEqual(persistedNormalized.beatGrid.first?.startSeconds, 0.0, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(persistedNormalized.beatGrid.first?.startSeconds), 0.0, accuracy: 0.001)
 
         let baseChartArtifact = try XCTUnwrap(artifacts.first(where: { $0.artifactType == "base_chart" }))
         let baseChartArtifactURL = try XCTUnwrap(URL(string: baseChartArtifact.uri))
