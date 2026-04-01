@@ -1006,6 +1006,19 @@ public struct AudioAnalyzerConfiguration: Sendable {
         "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
+    private static func liveEnvironment() -> [String: String] {
+        [
+            "PIPELINE_AUDIO_ANALYZER_COMMAND": getenvString("PIPELINE_AUDIO_ANALYZER_COMMAND"),
+            "PIPELINE_AUDIO_ANALYZER_TIMEOUT_SECONDS": getenvString("PIPELINE_AUDIO_ANALYZER_TIMEOUT_SECONDS"),
+            "PIPELINE_AUDIO_ANALYZER_STDOUT_JSON": getenvString("PIPELINE_AUDIO_ANALYZER_STDOUT_JSON")
+        ].compactMapValues { $0 }
+    }
+
+    private static func getenvString(_ key: String) -> String? {
+        guard let raw = getenv(key) else { return nil }
+        return String(cString: raw)
+    }
+
     private static func boolFlag(_ value: String?) -> Bool {
         guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() else { return false }
         return ["1", "true", "yes", "on"].contains(value)
