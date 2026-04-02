@@ -133,6 +133,8 @@ Given a `BaseChartContract`, the evaluator computes:
 - measure count
 - unique lanes used
 - per-lane note usage
+- per-lane balance (`noteShare` and `notesPerMeasure`)
+- focused lane balance for the most useful tuning lanes right now: kick / snare / closed hi-hat
 - per-measure note density
 - maximum simultaneous notes at one tick
 - maximum notes inside one beat
@@ -159,12 +161,22 @@ The current report avoids that by projecting the chart into a stable snapshot wi
 - note count
 - normalized lane list
 - per-lane counts
+- focused lane balance strings like `kick=8@0.25 snare=4@0.12 hihat_closed=16@0.50`
 - per-measure density like `m0=2 m1=6 m2=1`
 - a sorted preview of the first notes as strings like:
   - `tick=0:beat=0:sub=0:lane=kick:vel=1.00`
   - `tick=240:beat=1:sub=2:lane=snare:vel=0.70`
 
 That is deliberately opinionated: it keeps the parts of the generated chart that matter for structural regressions, while ignoring volatile IDs and timestamps.
+
+There is also now a tiny comparison helper for before/after tuning work: `ChartMetricsComparator.compare(baseline:candidate:)`. It does not attempt a full diff. It answers the practical questions that come up when analyzer mapping changes:
+
+- did total note count go up or down?
+- did notes-per-measure get denser or sparser?
+- did kick / snare / closed hi-hat counts drift?
+- did their shares of the chart drift even if the absolute counts changed?
+
+That gives chart-generation iteration a cheap way to say “this version got 2 notes denser and shifted 8% more of the chart onto kick” without snapshotting entire artifacts.
 
 For real clips, this is a better regression-review shape because:
 

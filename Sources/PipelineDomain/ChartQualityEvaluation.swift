@@ -137,10 +137,14 @@ public struct ChartQualityReport: Codable, Sendable {
 
     public var regressionSummary: String {
         let issueText = issues.isEmpty ? "none" : issues.map(\.code).joined(separator: ",")
+        let focusedLaneText = regressionSnapshot.focusedLaneBalance.isEmpty
+            ? "none"
+            : regressionSnapshot.focusedLaneBalance.map { "\($0.lane)=\($0.noteCount)@\(Self.format($0.noteShare))" }.joined(separator: " ")
         return [
             summary,
             "snapshot lanes=\(regressionSnapshot.lanes.joined(separator: ",")) measures=\(regressionSnapshot.measureCount) notes=\(regressionSnapshot.noteCount)",
             "lane_usage \(regressionSnapshot.laneUsage.map { "\($0.lane)=\($0.noteCount)" }.joined(separator: " "))",
+            "focused_lane_balance \(focusedLaneText)",
             "measure_density \(regressionSnapshot.measureDensity.map { "m\($0.measureIndex)=\($0.noteCount)" }.joined(separator: " "))",
             "note_preview \(regressionSnapshot.notePreview.joined(separator: " | "))",
             "issues \(issueText)"
@@ -165,6 +169,8 @@ public struct ChartQualityMetrics: Codable, Sendable {
     public let measureCount: Int
     public let uniqueLanes: [DrumLane]
     public let laneUsage: [LaneUsageMetric]
+    public let laneBalance: [LaneBalanceMetric]
+    public let focusedLaneBalance: [LaneBalanceMetric]
     public let measureDensity: [MeasureDensityMetric]
     public let maxSimultaneousNotes: Int
     public let maxNotesPerBeat: Int
@@ -177,6 +183,8 @@ public struct ChartQualityMetrics: Codable, Sendable {
         measureCount: Int,
         uniqueLanes: [DrumLane],
         laneUsage: [LaneUsageMetric],
+        laneBalance: [LaneBalanceMetric],
+        focusedLaneBalance: [LaneBalanceMetric],
         measureDensity: [MeasureDensityMetric],
         maxSimultaneousNotes: Int,
         maxNotesPerBeat: Int,
@@ -188,6 +196,8 @@ public struct ChartQualityMetrics: Codable, Sendable {
         self.measureCount = measureCount
         self.uniqueLanes = uniqueLanes
         self.laneUsage = laneUsage
+        self.laneBalance = laneBalance
+        self.focusedLaneBalance = focusedLaneBalance
         self.measureDensity = measureDensity
         self.maxSimultaneousNotes = maxSimultaneousNotes
         self.maxNotesPerBeat = maxNotesPerBeat
@@ -207,6 +217,20 @@ public struct LaneUsageMetric: Codable, Sendable {
     }
 }
 
+public struct LaneBalanceMetric: Codable, Sendable {
+    public let lane: DrumLane
+    public let noteCount: Int
+    public let noteShare: Double
+    public let notesPerMeasure: Double
+
+    public init(lane: DrumLane, noteCount: Int, noteShare: Double, notesPerMeasure: Double) {
+        self.lane = lane
+        self.noteCount = noteCount
+        self.noteShare = noteShare
+        self.notesPerMeasure = notesPerMeasure
+    }
+}
+
 public struct MeasureDensityMetric: Codable, Sendable {
     public let measureIndex: Int
     public let noteCount: Int
@@ -222,14 +246,16 @@ public struct ChartRegressionSnapshot: Codable, Sendable {
     public let noteCount: Int
     public let lanes: [String]
     public let laneUsage: [ChartRegressionLaneUsage]
+    public let focusedLaneBalance: [ChartRegressionLaneBalance]
     public let measureDensity: [ChartRegressionMeasureDensity]
     public let notePreview: [String]
 
-    public init(measureCount: Int, noteCount: Int, lanes: [String], laneUsage: [ChartRegressionLaneUsage], measureDensity: [ChartRegressionMeasureDensity], notePreview: [String]) {
+    public init(measureCount: Int, noteCount: Int, lanes: [String], laneUsage: [ChartRegressionLaneUsage], focusedLaneBalance: [ChartRegressionLaneBalance], measureDensity: [ChartRegressionMeasureDensity], notePreview: [String]) {
         self.measureCount = measureCount
         self.noteCount = noteCount
         self.lanes = lanes
         self.laneUsage = laneUsage
+        self.focusedLaneBalance = focusedLaneBalance
         self.measureDensity = measureDensity
         self.notePreview = notePreview
     }
@@ -242,6 +268,18 @@ public struct ChartRegressionLaneUsage: Codable, Sendable {
     public init(lane: String, noteCount: Int) {
         self.lane = lane
         self.noteCount = noteCount
+    }
+}
+
+public struct ChartRegressionLaneBalance: Codable, Sendable {
+    public let lane: String
+    public let noteCount: Int
+    public let noteShare: Double
+
+    public init(lane: String, noteCount: Int, noteShare: Double) {
+        self.lane = lane
+        self.noteCount = noteCount
+        self.noteShare = noteShare
     }
 }
 
@@ -625,7 +663,112 @@ public enum ChartEvaluationRunner {
     }
 }
 
+public struct ChartMetricsComparison: Codable, Sendable {
+    public let baselineDifficulty: String
+    public let candidateDifficulty: String
+    public let noteCountDelta: Int
+    public let measureCountDelta: Int
+    public let averageNotesPerMeasureDelta: Double
+    public let focusedLaneDeltas: [FocusedLaneDelta]
+
+    public var summary: String {
+        let laneText = focusedLaneDeltas.isEmpty
+            ? "none"
+            : focusedLaneDeltas.map {
+                let noteDelta = $0.noteCountDelta >= 0 ? "+\($0.noteCountDelta)" : "\($0.noteCountDelta)"
+                let shareDelta = $0.noteShareDelta >= 0 ? "+\(Self.format($0.noteShareDelta))" : Self.format($0.noteShareDelta)
+                return "\($0.lane.rawValue)=\(noteDelta)@\(shareDelta)"
+            }.joined(separator: " ")
+        let noteDelta = noteCountDelta >= 0 ? "+\(noteCountDelta)" : "\(noteCountDelta)"
+        let measureDelta = measureCountDelta >= 0 ? "+\(measureCountDelta)" : "\(measureCountDelta)"
+        let densityDelta = averageNotesPerMeasureDelta >= 0 ? "+\(Self.format(averageNotesPerMeasureDelta))" : Self.format(averageNotesPerMeasureDelta)
+        return "compare baseline=\(baselineDifficulty) candidate=\(candidateDifficulty) notes=\(noteDelta) measures=\(measureDelta) avg_notes_per_measure=\(densityDelta) focused=\(laneText)"
+    }
+
+    public init(
+        baselineDifficulty: String,
+        candidateDifficulty: String,
+        noteCountDelta: Int,
+        measureCountDelta: Int,
+        averageNotesPerMeasureDelta: Double,
+        focusedLaneDeltas: [FocusedLaneDelta]
+    ) {
+        self.baselineDifficulty = baselineDifficulty
+        self.candidateDifficulty = candidateDifficulty
+        self.noteCountDelta = noteCountDelta
+        self.measureCountDelta = measureCountDelta
+        self.averageNotesPerMeasureDelta = averageNotesPerMeasureDelta
+        self.focusedLaneDeltas = focusedLaneDeltas
+    }
+
+    private static func format(_ value: Double) -> String {
+        String(format: "%.2f", value)
+    }
+}
+
+public struct FocusedLaneDelta: Codable, Sendable {
+    public let lane: DrumLane
+    public let baselineNoteCount: Int
+    public let candidateNoteCount: Int
+    public let noteCountDelta: Int
+    public let baselineNoteShare: Double
+    public let candidateNoteShare: Double
+    public let noteShareDelta: Double
+
+    public init(
+        lane: DrumLane,
+        baselineNoteCount: Int,
+        candidateNoteCount: Int,
+        noteCountDelta: Int,
+        baselineNoteShare: Double,
+        candidateNoteShare: Double,
+        noteShareDelta: Double
+    ) {
+        self.lane = lane
+        self.baselineNoteCount = baselineNoteCount
+        self.candidateNoteCount = candidateNoteCount
+        self.noteCountDelta = noteCountDelta
+        self.baselineNoteShare = baselineNoteShare
+        self.candidateNoteShare = candidateNoteShare
+        self.noteShareDelta = noteShareDelta
+    }
+}
+
+public enum ChartMetricsComparator {
+    private static let focusedLanes: [DrumLane] = [.kick, .snare, .hihatClosed]
+
+    public static func compare(baseline: ChartQualityReport, candidate: ChartQualityReport) -> ChartMetricsComparison {
+        let baselineFocused = Dictionary(uniqueKeysWithValues: baseline.metrics.focusedLaneBalance.map { ($0.lane, $0) })
+        let candidateFocused = Dictionary(uniqueKeysWithValues: candidate.metrics.focusedLaneBalance.map { ($0.lane, $0) })
+
+        let focusedLaneDeltas = focusedLanes.map { lane in
+            let baselineMetric = baselineFocused[lane] ?? LaneBalanceMetric(lane: lane, noteCount: 0, noteShare: 0, notesPerMeasure: 0)
+            let candidateMetric = candidateFocused[lane] ?? LaneBalanceMetric(lane: lane, noteCount: 0, noteShare: 0, notesPerMeasure: 0)
+            return FocusedLaneDelta(
+                lane: lane,
+                baselineNoteCount: baselineMetric.noteCount,
+                candidateNoteCount: candidateMetric.noteCount,
+                noteCountDelta: candidateMetric.noteCount - baselineMetric.noteCount,
+                baselineNoteShare: baselineMetric.noteShare,
+                candidateNoteShare: candidateMetric.noteShare,
+                noteShareDelta: candidateMetric.noteShare - baselineMetric.noteShare
+            )
+        }
+
+        return ChartMetricsComparison(
+            baselineDifficulty: baseline.difficulty,
+            candidateDifficulty: candidate.difficulty,
+            noteCountDelta: candidate.metrics.noteCount - baseline.metrics.noteCount,
+            measureCountDelta: candidate.metrics.measureCount - baseline.metrics.measureCount,
+            averageNotesPerMeasureDelta: candidate.metrics.averageNotesPerMeasure - baseline.metrics.averageNotesPerMeasure,
+            focusedLaneDeltas: focusedLaneDeltas
+        )
+    }
+}
+
 public enum ChartQualityEvaluator {
+    private static let focusedLanes: [DrumLane] = [.kick, .snare, .hihatClosed]
+
     public static func evaluate(chart: BaseChartContract, against expectation: ChartQualityExpectation) -> ChartQualityReport {
         let metrics = collectMetrics(from: chart)
         var issues: [ChartQualityIssue] = []
@@ -771,6 +914,24 @@ public enum ChartQualityEvaluator {
             .map { LaneUsageMetric(lane: $0.key, noteCount: $0.value.count) }
             .sorted { $0.lane.rawValue < $1.lane.rawValue }
 
+        let laneBalance = laneUsage.map { metric in
+            LaneBalanceMetric(
+                lane: metric.lane,
+                noteCount: metric.noteCount,
+                noteShare: noteCount > 0 ? Double(metric.noteCount) / Double(noteCount) : 0,
+                notesPerMeasure: measureCount > 0 ? Double(metric.noteCount) / Double(measureCount) : 0
+            )
+        }
+        let focusedLaneLookup = Dictionary(uniqueKeysWithValues: laneBalance.map { ($0.lane, $0) })
+        let focusedLaneBalance = focusedLanes.map { lane in
+            focusedLaneLookup[lane] ?? LaneBalanceMetric(
+                lane: lane,
+                noteCount: 0,
+                noteShare: 0,
+                notesPerMeasure: 0
+            )
+        }
+
         let measureDensity = chart.chart.measures
             .sorted { $0.barIndex < $1.barIndex }
             .map { measure in
@@ -785,6 +946,8 @@ public enum ChartQualityEvaluator {
             measureCount: measureCount,
             uniqueLanes: uniqueLanes,
             laneUsage: laneUsage,
+            laneBalance: laneBalance,
+            focusedLaneBalance: focusedLaneBalance,
             measureDensity: measureDensity,
             maxSimultaneousNotes: maxSimultaneousNotes,
             maxNotesPerBeat: maxNotesPerBeat,
@@ -812,6 +975,9 @@ public enum ChartQualityEvaluator {
             noteCount: metrics.noteCount,
             lanes: metrics.uniqueLanes.map(\.rawValue),
             laneUsage: metrics.laneUsage.map { ChartRegressionLaneUsage(lane: $0.lane.rawValue, noteCount: $0.noteCount) },
+            focusedLaneBalance: metrics.focusedLaneBalance.map {
+                ChartRegressionLaneBalance(lane: $0.lane.rawValue, noteCount: $0.noteCount, noteShare: $0.noteShare)
+            },
             measureDensity: metrics.measureDensity.map { ChartRegressionMeasureDensity(measureIndex: $0.measureIndex, noteCount: $0.noteCount) },
             notePreview: Array(preview)
         )

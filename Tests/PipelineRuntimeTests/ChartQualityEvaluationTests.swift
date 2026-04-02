@@ -102,13 +102,21 @@ final class ChartQualityEvaluationTests: XCTestCase {
         XCTAssertEqual(report.metrics.averageNotesPerMeasure, 3.0, accuracy: 0.0001)
         XCTAssertEqual(report.metrics.laneUsage.count, 3)
         XCTAssertEqual(report.metrics.measureDensity.map(\.noteCount), [3])
+        XCTAssertEqual(report.metrics.focusedLaneBalance.map(\.lane), [.kick, .snare, .hihatClosed])
+        XCTAssertEqual(report.metrics.focusedLaneBalance.map(\.noteCount), [1, 1, 1])
+        XCTAssertEqual(report.metrics.focusedLaneBalance.count, 3)
+        XCTAssertEqual(report.metrics.focusedLaneBalance[0].noteShare, 1.0 / 3.0, accuracy: 0.0001)
+        XCTAssertEqual(report.metrics.focusedLaneBalance[1].noteShare, 1.0 / 3.0, accuracy: 0.0001)
+        XCTAssertEqual(report.metrics.focusedLaneBalance[2].noteShare, 1.0 / 3.0, accuracy: 0.0001)
         XCTAssertEqual(report.score, 1.0, accuracy: 0.0001)
         XCTAssertEqual(report.regressionSnapshot.notePreview.count, 3)
         XCTAssertEqual(report.regressionSnapshot.notePreview.first, "tick=0:beat=0:sub=nil:lane=kick:vel=nil")
         XCTAssertEqual(report.regressionSnapshot.measureDensity.map(\.noteCount), [3])
+        XCTAssertEqual(report.regressionSnapshot.focusedLaneBalance.map(\.lane), ["kick", "snare", "hihat_closed"])
         XCTAssertTrue(report.summary.contains("PASS"))
         XCTAssertTrue(report.regressionSummary.contains("note_preview"))
         XCTAssertTrue(report.regressionSummary.contains("measure_density m0=3"))
+        XCTAssertTrue(report.regressionSummary.contains("focused_lane_balance kick=1@0.33 snare=1@0.33 hihat_closed=1@0.33"))
     }
 
     func testEvaluatorFlagsOverchartedUnexpectedLaneAndChording() {
@@ -192,6 +200,80 @@ final class ChartQualityEvaluationTests: XCTestCase {
         XCTAssertEqual(report.metrics.measureDensity.map(\.noteCount), [0])
         XCTAssertEqual(report.metrics.averageNotesPerMeasure, 0.0, accuracy: 0.0001)
         XCTAssertEqual(report.score, 0.0, accuracy: 0.0001)
+    }
+
+    func testComparatorHighlightsFocusedLaneDistributionDrift() {
+        let expectation = ChartQualityExpectation(
+            difficulty: "prototype",
+            noteCountRange: .init(min: 1, max: 16),
+            measureCountRange: .init(min: 1, max: 2),
+            requiredLanes: [.kick, .snare],
+            allowedLanes: [.kick, .snare, .hihatClosed],
+            minDistinctLanes: 2,
+            maxSimultaneousNotes: 1,
+            maxNotesPerBeat: 4,
+            maxNotesPerMeasure: 16,
+            allowedEmptyMeasures: 0,
+            minimumScore: 0.5
+        )
+
+        let baseline = ChartQualityEvaluator.evaluate(
+            chart: makeChart(
+                difficulty: "prototype",
+                measures: 1,
+                notes: [
+                    .init(lane: .kick, tick: 0, beatIndex: 0, startSeconds: 0.0),
+                    .init(lane: .hihatClosed, tick: 240, beatIndex: 0, startSeconds: 0.25),
+                    .init(lane: .snare, tick: 480, beatIndex: 1, startSeconds: 0.5),
+                    .init(lane: .hihatClosed, tick: 720, beatIndex: 1, startSeconds: 0.75)
+                ]
+            ),
+            against: expectation
+        )
+
+        let candidate = ChartQualityEvaluator.evaluate(
+            chart: makeChart(
+                difficulty: "prototype",
+                measures: 1,
+                notes: [
+                    .init(lane: .kick, tick: 0, beatIndex: 0, startSeconds: 0.0),
+                    .init(lane: .kick, tick: 120, beatIndex: 0, startSeconds: 0.125),
+                    .init(lane: .hihatClosed, tick: 240, beatIndex: 0, startSeconds: 0.25),
+                    .init(lane: .hihatClosed, tick: 720, beatIndex: 1, startSeconds: 0.75),
+                    .init(lane: .hihatClosed, tick: 840, beatIndex: 1, startSeconds: 0.875),
+                    .init(lane: .snare, tick: 960, beatIndex: 2, startSeconds: 1.0)
+                ]
+            ),
+            against: expectation
+        )
+
+        let comparison = ChartMetricsComparator.compare(baseline: baseline, candidate: candidate)
+
+        XCTAssertEqual(comparison.noteCountDelta, 2)
+        XCTAssertEqual(comparison.measureCountDelta, 0)
+        XCTAssertEqual(comparison.averageNotesPerMeasureDelta, 2.0, accuracy: 0.0001)
+
+        let kickDelta = try XCTUnwrap(comparison.focusedLaneDeltas.first(where: { $0.lane == .kick }))
+        XCTAssertEqual(kickDelta.baselineNoteCount, 1)
+        XCTAssertEqual(kickDelta.candidateNoteCount, 2)
+        XCTAssertEqual(kickDelta.noteCountDelta, 1)
+        XCTAssertEqual(kickDelta.baselineNoteShare, 0.25, accuracy: 0.0001)
+        XCTAssertEqual(kickDelta.candidateNoteShare, 2.0 / 6.0, accuracy: 0.0001)
+        XCTAssertEqual(kickDelta.noteShareDelta, (2.0 / 6.0) - 0.25, accuracy: 0.0001)
+
+        let snareDelta = try XCTUnwrap(comparison.focusedLaneDeltas.first(where: { $0.lane == .snare }))
+        XCTAssertEqual(snareDelta.noteCountDelta, 0)
+        XCTAssertEqual(snareDelta.noteShareDelta, (1.0 / 6.0) - 0.25, accuracy: 0.0001)
+
+        let hihatDelta = try XCTUnwrap(comparison.focusedLaneDeltas.first(where: { $0.lane == .hihatClosed }))
+        XCTAssertEqual(hihatDelta.noteCountDelta, 1)
+        XCTAssertEqual(hihatDelta.baselineNoteShare, 0.5, accuracy: 0.0001)
+        XCTAssertEqual(hihatDelta.candidateNoteShare, 0.5, accuracy: 0.0001)
+        XCTAssertEqual(hihatDelta.noteShareDelta, 0.0, accuracy: 0.0001)
+        XCTAssertTrue(comparison.summary.contains("notes=+2"))
+        XCTAssertTrue(comparison.summary.contains("kick=+1@+0.08"))
+        XCTAssertTrue(comparison.summary.contains("snare=+0@-0.08"))
+        XCTAssertTrue(comparison.summary.contains("hihat_closed=+1@+0.00"))
     }
 
     func testCorpusRunnerProducesStableRegressionFriendlyTextReport() {
