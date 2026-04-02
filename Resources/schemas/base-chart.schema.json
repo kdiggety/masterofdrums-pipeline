@@ -12,6 +12,7 @@
     "status",
     "source",
     "chart",
+    "drumEventDiagnostics",
     "warnings",
     "note"
   ],
@@ -60,6 +61,12 @@
         }
       }
     },
+    "drumEventDiagnostics": {
+      "oneOf": [
+        { "$ref": "#/$defs/drumEventDiagnostics" },
+        { "type": "null" }
+      ]
+    },
     "warnings": {
       "type": "array",
       "items": { "type": "string", "minLength": 1 }
@@ -70,6 +77,30 @@
     }
   },
   "$defs": {
+    "drumEventDiagnostics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rawCandidateCount",
+        "mappedCandidateCount",
+        "postShapingEventCount",
+        "usedFallback",
+        "droppedMissingOnsetCount",
+        "droppedUnknownLaneCount",
+        "deduplicatedCandidateCount",
+        "shapingReductionCount"
+      ],
+      "properties": {
+        "rawCandidateCount": { "type": "integer", "minimum": 0 },
+        "mappedCandidateCount": { "type": "integer", "minimum": 0 },
+        "postShapingEventCount": { "type": "integer", "minimum": 0 },
+        "usedFallback": { "type": "boolean" },
+        "droppedMissingOnsetCount": { "type": "integer", "minimum": 0 },
+        "droppedUnknownLaneCount": { "type": "integer", "minimum": 0 },
+        "deduplicatedCandidateCount": { "type": "integer", "minimum": 0 },
+        "shapingReductionCount": { "type": "integer", "minimum": 0 }
+      }
+    },
     "timeSignature": {
       "type": "object",
       "additionalProperties": false,

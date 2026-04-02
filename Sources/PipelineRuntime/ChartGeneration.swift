@@ -43,7 +43,7 @@ enum ChartGenerator {
             ),
             beatGrid: beatGrid,
             drumEvents: drumEventResult.events,
-            drumEventDiagnostics: drumEventResult.diagnostics.counts,
+            drumEventDiagnostics: drumEventResult.diagnostics,
             warnings: warnings,
             note: usedAnalyzerEvents
                 ? "Normalized analysis generated from analyzer timing/event output with \(detectedSubdivisionCount)x subdivision anchors per beat."
@@ -68,7 +68,7 @@ enum ChartGenerator {
                 measures: measures,
                 notes: notes
             ),
-            drumEventDiagnostics: drumEventResult.diagnostics.counts,
+            drumEventDiagnostics: drumEventResult.diagnostics,
             warnings: warnings,
             note: usedAnalyzerEvents
                 ? "Base chart generated from analyzer timing and mapped drum-event candidates using \(detectedSubdivisionCount)x quantization."

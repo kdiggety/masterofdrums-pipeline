@@ -14,6 +14,7 @@
     "summary",
     "beatGrid",
     "drumEvents",
+    "drumEventDiagnostics",
     "warnings",
     "note"
   ],
@@ -66,6 +67,12 @@
     "drumEvents": {
       "type": "array",
       "items": { "$ref": "#/$defs/drumEvent" }
+    },
+    "drumEventDiagnostics": {
+      "oneOf": [
+        { "$ref": "#/$defs/drumEventDiagnostics" },
+        { "type": "null" }
+      ]
     },
     "warnings": {
       "type": "array",
@@ -146,6 +153,30 @@
         "velocity": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
         "sourceLabel": { "type": ["string", "null"], "minLength": 1 },
         "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }
+      }
+    },
+    "drumEventDiagnostics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rawCandidateCount",
+        "mappedCandidateCount",
+        "postShapingEventCount",
+        "usedFallback",
+        "droppedMissingOnsetCount",
+        "droppedUnknownLaneCount",
+        "deduplicatedCandidateCount",
+        "shapingReductionCount"
+      ],
+      "properties": {
+        "rawCandidateCount": { "type": "integer", "minimum": 0 },
+        "mappedCandidateCount": { "type": "integer", "minimum": 0 },
+        "postShapingEventCount": { "type": "integer", "minimum": 0 },
+        "usedFallback": { "type": "boolean" },
+        "droppedMissingOnsetCount": { "type": "integer", "minimum": 0 },
+        "droppedUnknownLaneCount": { "type": "integer", "minimum": 0 },
+        "deduplicatedCandidateCount": { "type": "integer", "minimum": 0 },
+        "shapingReductionCount": { "type": "integer", "minimum": 0 }
       }
     }
   }

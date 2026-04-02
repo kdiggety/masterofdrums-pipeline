@@ -12,6 +12,7 @@ public struct NormalizedAnalysisContract: Codable, Sendable {
     public let summary: NormalizedAnalysisSummary
     public let beatGrid: [BeatGridEvent]
     public let drumEvents: [DetectedDrumEvent]
+    public let drumEventDiagnostics: DrumEventDiagnostics?
     public let warnings: [String]
     public let note: String?
 
@@ -24,6 +25,7 @@ public struct NormalizedAnalysisContract: Codable, Sendable {
         summary: NormalizedAnalysisSummary,
         beatGrid: [BeatGridEvent],
         drumEvents: [DetectedDrumEvent],
+        drumEventDiagnostics: DrumEventDiagnostics? = nil,
         warnings: [String] = [],
         note: String? = nil
     ) {
@@ -35,6 +37,7 @@ public struct NormalizedAnalysisContract: Codable, Sendable {
         self.summary = summary
         self.beatGrid = beatGrid
         self.drumEvents = drumEvents
+        self.drumEventDiagnostics = drumEventDiagnostics
         self.warnings = warnings
         self.note = note
     }
@@ -95,6 +98,37 @@ public struct NormalizedAnalysisSummary: Codable, Sendable {
 }
 
 extension NormalizedAnalysisSummary: JSONStringEncodable {}
+
+public struct DrumEventDiagnostics: Codable, Sendable {
+    public let rawCandidateCount: Int
+    public let mappedCandidateCount: Int
+    public let postShapingEventCount: Int
+    public let usedFallback: Bool
+    public let droppedMissingOnsetCount: Int
+    public let droppedUnknownLaneCount: Int
+    public let deduplicatedCandidateCount: Int
+    public let shapingReductionCount: Int
+
+    public init(
+        rawCandidateCount: Int,
+        mappedCandidateCount: Int,
+        postShapingEventCount: Int,
+        usedFallback: Bool,
+        droppedMissingOnsetCount: Int = 0,
+        droppedUnknownLaneCount: Int = 0,
+        deduplicatedCandidateCount: Int = 0,
+        shapingReductionCount: Int = 0
+    ) {
+        self.rawCandidateCount = rawCandidateCount
+        self.mappedCandidateCount = mappedCandidateCount
+        self.postShapingEventCount = postShapingEventCount
+        self.usedFallback = usedFallback
+        self.droppedMissingOnsetCount = droppedMissingOnsetCount
+        self.droppedUnknownLaneCount = droppedUnknownLaneCount
+        self.deduplicatedCandidateCount = deduplicatedCandidateCount
+        self.shapingReductionCount = shapingReductionCount
+    }
+}
 
 public struct TimeSignature: Codable, Sendable {
     public let numerator: Int
@@ -201,6 +235,7 @@ public struct BaseChartContract: Codable, Sendable {
     public let status: String
     public let source: BaseChartSource
     public let chart: BaseChartData
+    public let drumEventDiagnostics: DrumEventDiagnostics?
     public let warnings: [String]
     public let note: String?
 
@@ -211,6 +246,7 @@ public struct BaseChartContract: Codable, Sendable {
         status: String = "completed",
         source: BaseChartSource,
         chart: BaseChartData,
+        drumEventDiagnostics: DrumEventDiagnostics? = nil,
         warnings: [String] = [],
         note: String? = nil
     ) {
@@ -220,6 +256,7 @@ public struct BaseChartContract: Codable, Sendable {
         self.status = status
         self.source = source
         self.chart = chart
+        self.drumEventDiagnostics = drumEventDiagnostics
         self.warnings = warnings
         self.note = note
     }

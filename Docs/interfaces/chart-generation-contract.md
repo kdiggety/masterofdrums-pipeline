@@ -266,6 +266,8 @@ Analyzer-driven drum-event shaping is intentionally conservative for prototype c
 
 To make that reduction auditable, both `normalized_analysis` and `base_chart` now carry a `drumEventDiagnostics` object with `rawCandidateCount`, `mappedCandidateCount`, and `postShapingEventCount` plus drop/dedup details. The generator also emits a warning shaped like `Analyzer drum-event shaping counts: raw=12 mapped=9 post-shaping=5.` so logs immediately show whether reduction happened during lane mapping or later shaping.
 
+To make that reduction auditable, both `normalized_analysis` and `base_chart` now carry a `drumEventDiagnostics` object with `rawCandidateCount`, `mappedCandidateCount`, and `postShapingEventCount` plus drop/dedup details. The generator also emits a warning shaped like `Analyzer drum-event shaping counts: raw=12 mapped=9 post-shaping=5.` so logs immediately show whether reduction happened during lane mapping or later shaping.
+
 ## Recommended next implementation step
 
 The current runtime now produces `normalized_analysis` and `base_chart` during `chart_generate`.
