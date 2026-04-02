@@ -9,7 +9,7 @@ struct ChartGenerationOutput {
 enum ChartGenerator {
     private static let fallbackSubdivisionsPerBeat = 4
     private static let supportedSubdivisionCandidates = [3, 4, 6, 8]
-    private static let maxClosedHihatPerBeat = 2
+    private static let maxClosedHihatPulsePerBeat = 1
 
     static func generate(from analysis: AudioAnalysisContract, generatedAt: Date, normalizedAnalysisArtifactURI: String) -> ChartGenerationOutput {
         let timeSignature = TimeSignature(numerator: 4, denominator: 4)
@@ -404,31 +404,53 @@ enum ChartGenerator {
             let hihats = beatEvents
                 .filter { $0.lane == .hihatClosed }
                 .sorted { lhs, rhs in
-                    let lhsPriority = hihatSubdivisionPriority(lhs.onsetSubdivisionIndex)
-                    let rhsPriority = hihatSubdivisionPriority(rhs.onsetSubdivisionIndex)
+                    let lhsPriority = hihatSubdivisionPriority(lhs.onsetSubdivisionIndex, beatIndex: beatIndex)
+                    let rhsPriority = hihatSubdivisionPriority(rhs.onsetSubdivisionIndex, beatIndex: beatIndex)
                     if lhsPriority != rhsPriority { return lhsPriority < rhsPriority }
                     return eventPreferenceSort(lhs, rhs)
                 }
 
             var seenHiHatSubdivisions = Set<Int>()
-            let keptHihats = hihats.filter { event in
+            let uniqueHihats = hihats.filter { event in
                 guard let subdivision = event.onsetSubdivisionIndex else { return false }
                 return seenHiHatSubdivisions.insert(subdivision).inserted
             }
-            .prefix(maxClosedHihatPerBeat)
+
+            let pulseHihats = Array(uniqueHihats.prefix(maxClosedHihatPulsePerBeat))
+            let textureHihat = preferredTextureHiHat(from: uniqueHihats.dropFirst(maxClosedHihatPulsePerBeat), beatIndex: beatIndex)
+            let keptHihats = pulseHihats + (textureHihat.map { [$0] } ?? [])
 
             return (kicksAndSnares + keptHihats).sorted(by: eventPreferenceSort)
         }
     }
 
-    private static func hihatSubdivisionPriority(_ subdivisionIndex: Int?) -> Int {
+    private static func hihatSubdivisionPriority(_ subdivisionIndex: Int?, beatIndex: Int) -> Int {
         guard let subdivisionIndex else { return Int.max }
         switch subdivisionIndex % max(fallbackSubdivisionsPerBeat, 1) {
         case 0: return 0
         case 2: return 1
-        case 1, 3: return 2
-        default: return 3
+        case 1, 3: return prefersTextureOnBeat(beatIndex) ? 2 : 4
+        default: return 5
         }
+    }
+
+    private static func preferredTextureHiHat<S: Sequence>(from candidates: S, beatIndex: Int) -> DetectedDrumEvent? where S.Element == DetectedDrumEvent {
+        guard prefersTextureOnBeat(beatIndex) else { return nil }
+
+        let textureCandidates = candidates.filter { event in
+            guard let subdivisionIndex = event.onsetSubdivisionIndex else { return false }
+            switch subdivisionIndex % max(fallbackSubdivisionsPerBeat, 1) {
+            case 1, 3: return true
+            default: return false
+            }
+        }
+
+        return textureCandidates.sorted(by: eventPreferenceSort).first
+    }
+
+    private static func prefersTextureOnBeat(_ beatIndex: Int) -> Bool {
+        let beatInBar = ((beatIndex % 4) + 4) % 4
+        return beatInBar == 0 || beatInBar == 2
     }
 
     private static func eventPreferenceSort(_ lhs: DetectedDrumEvent, _ rhs: DetectedDrumEvent) -> Bool {

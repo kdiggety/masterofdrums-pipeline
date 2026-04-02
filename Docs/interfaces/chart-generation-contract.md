@@ -244,6 +244,8 @@ This proposal is backed by:
 The runtime now produces `normalized_analysis` and `base_chart` artifacts during `chart_generate`.
 For the current slice, it prefers richer analyzer output when present (beat arrays, optional subdivision/tatum anchors, and drum-event candidates inside `rawAnalyzerOutput`) and otherwise falls back to a deterministic tempo-derived beat grid so downstream validation/export can start against stable artifacts now.
 
+Analyzer-driven drum-event shaping is intentionally conservative for prototype charts: kick/snare/crash structure is preserved, duplicate lane/slot hits are collapsed, and closed hi-hats are reduced to a single pulse hit per beat with only selective extra 1/16 texture on alternating beats. That keeps beat-tracker-derived charts from turning into constant hi-hat walls while still leaving some rhythmic motion in the scaffold.
+
 ## Recommended next implementation step
 
 The current runtime now produces `normalized_analysis` and `base_chart` during `chart_generate`.

@@ -246,6 +246,44 @@ final class ChartGenerationTests: XCTestCase {
         XCTAssertFalse(generated.normalized.warnings.contains(where: { $0.contains("unmapped lanes") }))
     }
 
+    func testGenerateShapesBeatThisStyleHatSpamIntoPulseAndSelectiveTexture() throws {
+        let analysis = makeAnalysis(raw: [
+            "beats": [0.0, 0.5, 1.0, 1.5, 2.0],
+            "drumEvents": [
+                ["eventID": "kick-1", "label": "kick", "onsetSeconds": 0.0, "velocity": 0.95],
+                ["eventID": "hat-1a", "label": "closed hat", "onsetSeconds": 0.0, "velocity": 0.55],
+                ["eventID": "hat-1b", "label": "closed hat", "onsetSeconds": 0.125, "velocity": 0.52],
+                ["eventID": "hat-1c", "label": "closed hat", "onsetSeconds": 0.25, "velocity": 0.50],
+                ["eventID": "hat-1d", "label": "closed hat", "onsetSeconds": 0.375, "velocity": 0.48],
+                ["eventID": "snare-2", "label": "snare", "onsetSeconds": 0.5, "velocity": 0.92],
+                ["eventID": "hat-2a", "label": "closed hat", "onsetSeconds": 0.5, "velocity": 0.55],
+                ["eventID": "hat-2b", "label": "closed hat", "onsetSeconds": 0.625, "velocity": 0.52],
+                ["eventID": "hat-2c", "label": "closed hat", "onsetSeconds": 0.75, "velocity": 0.50],
+                ["eventID": "hat-2d", "label": "closed hat", "onsetSeconds": 0.875, "velocity": 0.48],
+                ["eventID": "kick-3", "label": "kick", "onsetSeconds": 1.0, "velocity": 0.90],
+                ["eventID": "hat-3a", "label": "closed hat", "onsetSeconds": 1.0, "velocity": 0.55],
+                ["eventID": "hat-3b", "label": "closed hat", "onsetSeconds": 1.125, "velocity": 0.52],
+                ["eventID": "hat-3c", "label": "closed hat", "onsetSeconds": 1.25, "velocity": 0.50],
+                ["eventID": "hat-3d", "label": "closed hat", "onsetSeconds": 1.375, "velocity": 0.48],
+                ["eventID": "snare-4", "label": "snare", "onsetSeconds": 1.5, "velocity": 0.92],
+                ["eventID": "hat-4a", "label": "closed hat", "onsetSeconds": 1.5, "velocity": 0.55],
+                ["eventID": "hat-4b", "label": "closed hat", "onsetSeconds": 1.625, "velocity": 0.52],
+                ["eventID": "hat-4c", "label": "closed hat", "onsetSeconds": 1.75, "velocity": 0.50],
+                ["eventID": "hat-4d", "label": "closed hat", "onsetSeconds": 1.875, "velocity": 0.48]
+            ]
+        ], duration: 2.0)
+
+        let generated = ChartGenerator.generate(
+            from: analysis,
+            generatedAt: Date(timeIntervalSince1970: 0),
+            normalizedAnalysisArtifactURI: "file:///tmp/normalized.json"
+        )
+
+        XCTAssertEqual(generated.normalized.drumEvents.filter { $0.lane == .hihatClosed }.count, 6)
+        XCTAssertEqual(generated.baseChart.chart.notes.filter { $0.lane == .hihatClosed }.map(\.subdivisionIndex), [0, 1, 4, 8, 9, 12])
+        XCTAssertEqual(generated.baseChart.chart.notes.filter { $0.lane == .kick || $0.lane == .snare }.map(\.lane), [.kick, .snare, .kick, .snare])
+    }
+
     func testGenerateFallsBackToDeterministicQuarterNoteGridWithoutAnalyzerEvents() throws {
         let analysis = makeAnalysis(raw: [:], tempo: nil, duration: 1.0)
 
