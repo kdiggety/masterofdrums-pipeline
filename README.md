@@ -212,6 +212,14 @@ pip install https://github.com/CPJKU/beat_this/archive/main.zip
 # ffmpeg is recommended for non-WAV input decoding
 ```
 
+Verify the install before running the pipeline:
+
+```bash
+python3 -c 'import importlib.util, shutil; print("beat_this_py:", bool(importlib.util.find_spec("beat_this"))); print("beat_this_cli:", shutil.which("beat_this"))'
+```
+
+Expected result: `beat_this_py: True` or a non-empty `beat_this_cli:` path. If both are missing, the wrapper will fall back to the heuristic backend instead of using `beat_this`.
+
 Then set:
 
 ```bash
