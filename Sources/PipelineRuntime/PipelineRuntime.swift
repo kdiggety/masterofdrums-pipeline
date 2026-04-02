@@ -932,6 +932,11 @@ public struct PipelineRuntime {
       PIPELINE_AUDIO_ANALYZER_COMMAND          Shell command template with {input} and {output} placeholders
       PIPELINE_AUDIO_ANALYZER_TIMEOUT_SECONDS  Optional analyzer timeout in seconds
       PIPELINE_AUDIO_ANALYZER_STDOUT_JSON      Accept analyzer JSON from stdout when {output} is not written (default: false)
+      PIPELINE_ANALYZER_BACKEND_COMMAND        Legacy single backend behind scripts/analyzer-wrapper.py
+      PIPELINE_ANALYZER_PRIMARY_BACKEND_COMMAND Preferred primary backend for real analyzer rollout
+      PIPELINE_ANALYZER_FALLBACK_BACKEND_COMMAND Fallback backend (heuristic backend or madmom spike)
+      PIPELINE_ANALYZER_FALLBACK_POLICY        Wrapper fallback policy: disabled|on-error|on-invalid|on-error-or-invalid|always
+      PIPELINE_ANALYZER_VALIDATION_MODE        Wrapper payload validation: none|require-timing
     """
 }
 
