@@ -272,9 +272,26 @@ def validate_backend_payload(payload: dict[str, Any], validation_mode: str) -> l
     return issues
 
 
+def build_backend_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env.setdefault("PIPELINE_ANALYZER_WRAPPER_PYTHON", sys.executable)
+
+    wrapper_python = pathlib.Path(sys.executable)
+    wrapper_bin = str(wrapper_python.parent)
+    path_entries = env.get("PATH", "").split(os.pathsep) if env.get("PATH") else []
+    if wrapper_bin and wrapper_bin not in path_entries:
+        env["PATH"] = os.pathsep.join([wrapper_bin, *path_entries]) if path_entries else wrapper_bin
+
+    venv_root = wrapper_python.parent.parent
+    if (venv_root / "pyvenv.cfg").exists():
+        env.setdefault("VIRTUAL_ENV", str(venv_root))
+
+    return env
+
+
 def run_backend_command(command: str, input_path: str, output_path: str, allow_stdout_json: bool) -> dict[str, Any]:
     rendered = render_backend_command(command, input_path=input_path, output_path=output_path)
-    result = subprocess.run(rendered, shell=True, check=False, capture_output=True, text=True, env=os.environ.copy())
+    result = subprocess.run(rendered, shell=True, check=False, capture_output=True, text=True, env=build_backend_env())
     stdout_text = result.stdout.strip()
     stderr_text = result.stderr.strip()
 
