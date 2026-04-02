@@ -36,8 +36,10 @@ MIN_EVENT_GAP_SECONDS = 0.12
 MAX_EVENT_GAP_SECONDS = 1.5
 DEFAULT_TEMPO_BPM = 120.0
 FFMPEG_DECODE_TIMEOUT_SECONDS = 20
-KICK_RECLASSIFY_LIMIT = 0.22
-SNARE_CONFIDENCE_FLOOR = 0.58
+KICK_RECLASSIFY_LIMIT = 0.32
+SNARE_CONFIDENCE_FLOOR = 0.6
+HIHAT_CONFIDENCE_FLOOR = 0.6
+MIN_SAME_LANE_GAP_SECONDS = 0.18
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -286,13 +288,13 @@ def classify_event(samples: list[float], sample_rate: int, onset_seconds: float)
     bass_ratio = avg_abs / max(1e-6, low_motion)
     mid_ratio = mid_motion / max(1e-6, avg_abs)
 
-    if (zcr < 0.12 and punch_ratio > 1.02 and bass_ratio > 1.08) or (zcr < 0.08 and punch_ratio > 1.0):
-        confidence = min(0.99, 0.5 + avg_abs * 1.3 + max(0.0, bass_ratio - 1.0) * 0.25)
+    if (zcr < 0.14 and punch_ratio > 1.01 and bass_ratio > 1.03) or (zcr < 0.09 and punch_ratio > 0.98):
+        confidence = min(0.99, 0.48 + avg_abs * 1.15 + max(0.0, bass_ratio - 1.0) * 0.32)
         return "kick", "kick", confidence
-    if zcr > 0.24 or mid_ratio > 1.35:
-        confidence = min(0.99, 0.42 + max(zcr, min(mid_ratio / 2.0, 0.5)) * 1.25)
+    if zcr > 0.3 or (mid_ratio > 1.55 and punch_ratio < 1.08):
+        confidence = min(0.99, 0.38 + max(zcr, min(mid_ratio / 2.2, 0.45)) * 1.1)
         return "closed_hihat", "closed hi hat", confidence
-    confidence = min(0.99, 0.44 + avg_abs * 0.9 + min(mid_ratio, 1.0) * 0.08)
+    confidence = min(0.99, 0.46 + avg_abs * 0.95 + min(mid_ratio, 1.0) * 0.06)
     return "snare", "snare", confidence
 
 
@@ -352,10 +354,21 @@ def analyze_audio(input_path: str) -> dict[str, Any]:
 
     drum_events: list[dict[str, Any]] = []
     filtered_snare_count = 0
+    filtered_hihat_count = 0
+    deduped_count = 0
+    last_onset_by_lane: dict[str, float] = {}
     for index, (onset, lane, label, confidence) in enumerate(classified_events):
         if lane == "snare" and confidence < SNARE_CONFIDENCE_FLOOR:
             filtered_snare_count += 1
             continue
+        if lane == "closed_hihat" and confidence < HIHAT_CONFIDENCE_FLOOR:
+            filtered_hihat_count += 1
+            continue
+        previous_onset = last_onset_by_lane.get(lane)
+        if previous_onset is not None and onset - previous_onset < MIN_SAME_LANE_GAP_SECONDS:
+            deduped_count += 1
+            continue
+        last_onset_by_lane[lane] = onset
         drum_events.append(
             {
                 "eventID": f"evt-{index + 1}",
@@ -370,6 +383,10 @@ def analyze_audio(input_path: str) -> dict[str, Any]:
 
     if filtered_snare_count:
         warnings.append(f"filtered {filtered_snare_count} low-confidence snare candidates")
+    if filtered_hihat_count:
+        warnings.append(f"filtered {filtered_hihat_count} low-confidence hi-hat candidates")
+    if deduped_count:
+        warnings.append(f"deduped {deduped_count} near-duplicate same-lane hits")
     if len(onsets) < 2:
         warnings.append("insufficient onset peaks for stable tempo inference; fell back to default beat grid")
     if not drum_events:
