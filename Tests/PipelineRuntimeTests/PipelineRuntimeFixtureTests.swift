@@ -500,6 +500,179 @@ output_path.write_text(json.dumps(payload), encoding="utf-8")
         )
     }
 
+    func testWorkerUsesBeatThisPrimaryBackendViaPythonAPI() async throws {
+        let fixtureURL = try XCTUnwrap(Bundle.module.url(forResource: "known-tone", withExtension: "wav"))
+        let tempRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("masterofdrums-pipeline-tests", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+        let moduleRoot = tempRoot.appendingPathComponent("python")
+        let packageRoot = moduleRoot.appendingPathComponent("beat_this")
+        try FileManager.default.createDirectory(at: packageRoot, withIntermediateDirectories: true)
+        try "".write(to: packageRoot.appendingPathComponent("__init__.py"), atomically: true, encoding: .utf8)
+        try #"""
+class File2Beats:
+    def __init__(self, checkpoint_path="final0", device=None, dbn=False):
+        self.checkpoint_path = checkpoint_path
+        self.device = device
+        self.dbn = dbn
+
+    def __call__(self, audio_path):
+        return [0.0, 0.5, 1.0, 1.5], [0.0, 1.0]
+"""#.write(to: packageRoot.appendingPathComponent("inference.py"), atomically: true, encoding: .utf8)
+
+        let previousPythonPath = getenv("PYTHONPATH").flatMap { String(validatingUTF8: $0) }
+        let pythonPath = previousPythonPath.map { moduleRoot.path + ":" + $0 } ?? moduleRoot.path
+        setenv("PYTHONPATH", pythonPath, 1)
+        defer {
+            if let previousPythonPath {
+                setenv("PYTHONPATH", previousPythonPath, 1)
+            } else {
+                unsetenv("PYTHONPATH")
+            }
+        }
+
+        let backendPath = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("scripts", isDirectory: true)
+            .appendingPathComponent("beat-this-backend.py")
+            .path
+        let wrapperPath = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("scripts", isDirectory: true)
+            .appendingPathComponent("analyzer-wrapper.py")
+            .path
+
+        setenv("PIPELINE_ANALYZER_BACKEND_COMMAND", "python3 \(shellQuote(backendPath)) --input {input} --output {output}", 1)
+        defer { unsetenv("PIPELINE_ANALYZER_BACKEND_COMMAND") }
+
+        let analyzerCommand = "python3 \(shellQuote(wrapperPath)) --input {input} --output {output}"
+        let runtime = makeRuntime(
+            databasePath: tempRoot.appendingPathComponent("pipeline.sqlite").path,
+            artifactRoot: tempRoot.appendingPathComponent("artifacts", isDirectory: true).path,
+            analyzerCommand: analyzerCommand
+        )
+
+        try await runtime.run(
+            command: .enqueueAudioIngest(
+                sourceURI: fixtureURL.absoluteString,
+                sourceType: "file",
+                requestedBy: "test",
+                idempotencyKey: nil
+            )
+        )
+        try await runtime.run(command: .worker(stopAfterIdlePolls: 1))
+
+        let jobs = try await runtime.jobs.list(status: nil)
+        let analyzeJob = try XCTUnwrap(jobs.first(where: { $0.type == .audioAnalyze }))
+        let analysisResult = try decode(AudioAnalysisContract.self, from: analyzeJob.resultJSON)
+        XCTAssertEqual(analysisResult.analysis.estimatedTempoBPM, 120.0)
+        XCTAssertEqual(analysisResult.analysis.downbeatOffsetSeconds, 0.0)
+        XCTAssertEqual(analysisResult.segments.count, 1)
+        XCTAssertTrue(analysisResult.warnings.contains(where: { $0.contains("analyzer wrapper delegated to backend command") }))
+
+        let ingestJob = try XCTUnwrap(jobs.first(where: { $0.type == .audioIngest }))
+        let artifacts = try await runtime.artifacts.list(workflowID: ingestJob.workflowID, jobID: nil, limit: 10)
+        let normalizedArtifact = try XCTUnwrap(artifacts.first(where: { $0.artifactType == "normalized_analysis" }))
+        let normalizedArtifactURL = try XCTUnwrap(URL(string: normalizedArtifact.uri))
+        let persistedNormalized = try decode(NormalizedAnalysisContract.self, from: String(decoding: Data(contentsOf: normalizedArtifactURL), as: UTF8.self))
+        XCTAssertEqual(persistedNormalized.summary.beatCount, 4)
+        XCTAssertEqual(persistedNormalized.summary.barCount, 2)
+        XCTAssertEqual(persistedNormalized.beatGrid.first(where: { $0.beatIndex == 0 })?.isDownbeat, true)
+        XCTAssertEqual(persistedNormalized.beatGrid.first(where: { $0.beatIndex == 2 })?.isDownbeat, true)
+    }
+
+    func testBeatThisBackendFallsBackWhenPrimaryIsUnavailable() async throws {
+        let fixtureURL = try XCTUnwrap(Bundle.module.url(forResource: "known-tone", withExtension: "wav"))
+        let tempRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("masterofdrums-pipeline-tests", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+        let fallbackScript = tempRoot.appendingPathComponent("fallback-backend.py")
+        try #"""
+import json
+import os
+import pathlib
+
+output_path = pathlib.Path(os.environ["PIPELINE_ANALYZER_OUTPUT_PATH"])
+output_path.write_text(json.dumps({
+    "analysis": {
+        "audioTrackCount": 1,
+        "durationSeconds": 1.0,
+        "estimatedSegmentCount": 1,
+        "estimatedTempoBPM": 98.0,
+        "confidence": 0.5
+    },
+    "beats": [0.0, 0.612245],
+    "downbeats": [0.0],
+    "segments": [{"index": 0, "startSeconds": 0.0, "endSeconds": 1.0, "label": "full_track"}],
+    "warnings": ["fallback-script"]
+}), encoding="utf-8")
+"""#.write(to: fallbackScript, atomically: true, encoding: .utf8)
+
+        let previousPythonPath = getenv("PYTHONPATH").flatMap { String(validatingUTF8: $0) }
+        unsetenv("PYTHONPATH")
+        defer {
+            if let previousPythonPath {
+                setenv("PYTHONPATH", previousPythonPath, 1)
+            }
+        }
+
+        let backendPath = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("scripts", isDirectory: true)
+            .appendingPathComponent("beat-this-backend.py")
+            .path
+        let wrapperPath = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("scripts", isDirectory: true)
+            .appendingPathComponent("analyzer-wrapper.py")
+            .path
+
+        setenv("PIPELINE_ANALYZER_BACKEND_COMMAND", "python3 \(shellQuote(backendPath)) --input {input} --output {output}", 1)
+        setenv("PIPELINE_ANALYZER_FALLBACK_BACKEND_COMMAND", "python3 \(fallbackScript.path)", 1)
+        defer {
+            unsetenv("PIPELINE_ANALYZER_BACKEND_COMMAND")
+            unsetenv("PIPELINE_ANALYZER_FALLBACK_BACKEND_COMMAND")
+        }
+
+        let analyzerCommand = "python3 \(shellQuote(wrapperPath)) --input {input} --output {output}"
+        let runtime = makeRuntime(
+            databasePath: tempRoot.appendingPathComponent("pipeline.sqlite").path,
+            artifactRoot: tempRoot.appendingPathComponent("artifacts", isDirectory: true).path,
+            analyzerCommand: analyzerCommand
+        )
+
+        try await runtime.run(
+            command: .enqueueAudioIngest(
+                sourceURI: fixtureURL.absoluteString,
+                sourceType: "file",
+                requestedBy: "test",
+                idempotencyKey: nil
+            )
+        )
+        try await runtime.run(command: .worker(stopAfterIdlePolls: 1))
+
+        let jobs = try await runtime.jobs.list(status: nil)
+        let analyzeJob = try XCTUnwrap(jobs.first(where: { $0.type == .audioAnalyze }))
+        let analysisResult = try decode(AudioAnalysisContract.self, from: analyzeJob.resultJSON)
+        XCTAssertEqual(analysisResult.analysis.estimatedTempoBPM, 98.0)
+        XCTAssertTrue(analysisResult.warnings.contains("fallback-script"))
+        XCTAssertTrue(analysisResult.warnings.contains(where: { $0.contains("beat_this unavailable/failed; used fallback backend") }))
+    }
+
     private func decode<T: Decodable>(_ type: T.Type, from json: String?) throws -> T {
         let jsonString = try XCTUnwrap(json)
         let data = try XCTUnwrap(jsonString.data(using: .utf8))

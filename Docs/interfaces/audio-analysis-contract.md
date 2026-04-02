@@ -10,6 +10,14 @@ The worker now expects a real analyzer command via:
 - `PIPELINE_AUDIO_ANALYZER_TIMEOUT_SECONDS` (optional)
 - `PIPELINE_AUDIO_ANALYZER_STDOUT_JSON` (optional)
 
+When `PIPELINE_AUDIO_ANALYZER_COMMAND` points at `scripts/analyzer-wrapper.py`, the wrapper can also read these inherited env vars for primary/fallback backend orchestration:
+
+- `PIPELINE_ANALYZER_BACKEND_COMMAND` — legacy single backend passthrough
+- `PIPELINE_ANALYZER_PRIMARY_BACKEND_COMMAND` — preferred primary backend for a new real analyzer path
+- `PIPELINE_ANALYZER_FALLBACK_BACKEND_COMMAND` — fallback backend (heuristic backend or madmom spike)
+- `PIPELINE_ANALYZER_FALLBACK_POLICY` — `disabled`, `on-error`, `on-invalid`, `on-error-or-invalid`, or `always`
+- `PIPELINE_ANALYZER_VALIDATION_MODE` — `none` or `require-timing`
+
 The command is a shell template and must include:
 
 - `{input}` — source audio file path
@@ -19,9 +27,19 @@ Example:
 
 ```bash
 PIPELINE_AUDIO_ANALYZER_COMMAND="python3 ./scripts/analyzer-wrapper.py --input {input} --output {output}"
+
+# simplest legacy mode: one backend behind the stable wrapper entry point
 PIPELINE_ANALYZER_BACKEND_COMMAND="python3 ./scripts/backend-analyzer.py --input {input} --output {output}"
-# or point the backend env var at another analyzer implementation later
-# PIPELINE_ANALYZER_BACKEND_COMMAND="python3 /opt/mod/backend-analyzer.py --in {input} --out {output}"
+
+# preferred rollout mode for a new real backend:
+# PIPELINE_ANALYZER_PRIMARY_BACKEND_COMMAND="python3 ./scripts/beat-this-backend.py --input {input} --output {output}"
+# PIPELINE_ANALYZER_FALLBACK_BACKEND_COMMAND="python3 ./scripts/backend-analyzer.py --input {input} --output {output}"
+# PIPELINE_ANALYZER_FALLBACK_POLICY=on-error-or-invalid
+# PIPELINE_ANALYZER_VALIDATION_MODE=require-timing
+
+# optional alternate fallback spike:
+# PIPELINE_ANALYZER_FALLBACK_BACKEND_COMMAND="python3 ./scripts/madmom-fallback-backend.py --input {input} --output {output} --beats-file ./scripts/fixtures/madmom-sample.beats.txt --downbeats-file ./scripts/fixtures/madmom-sample.beats.txt"
+
 PIPELINE_AUDIO_ANALYZER_TIMEOUT_SECONDS=300
 PIPELINE_AUDIO_ANALYZER_STDOUT_JSON=false
 ```
@@ -72,7 +90,7 @@ Top-level persisted JSON includes:
 
 ## Expectations for analyzer implementations
 
-The runtime injects these environment variables into the analyzer process so wrappers can log or include pipeline context without extra argument churn. Because the worker inherits the parent environment, wrapper-specific variables such as `PIPELINE_ANALYZER_BACKEND_COMMAND` can also be used to keep the top-level analyzer command stable while swapping real backend implementations.
+The runtime injects these environment variables into the analyzer process so wrappers can log or include pipeline context without extra argument churn. Because the worker inherits the parent environment, wrapper-specific variables such as `PIPELINE_ANALYZER_BACKEND_COMMAND`, `PIPELINE_ANALYZER_PRIMARY_BACKEND_COMMAND`, and `PIPELINE_ANALYZER_FALLBACK_BACKEND_COMMAND` can be used to keep the top-level analyzer command stable while swapping real backend implementations.
 
 The runtime injects these environment variables into the analyzer process:
 
@@ -87,6 +105,8 @@ The runtime injects these environment variables into the analyzer process:
 - `PIPELINE_ANALYZER_CONTRACT_SCHEMA_VERSION`
 
 Preferred: emit the full pipeline contract directly.
+
+The repo now ships `scripts/beat-this-backend.py` as the intended primary backend. It tries the `beat_this` Python API first, then the `beat_this` CLI if available, and finally falls back to `scripts/backend-analyzer.py` unless fallback is disabled. That keeps the wrapper/backend seam stable while making the default path genuinely model-backed when dependencies are installed.
 
 Accepted: emit a simpler JSON object with fields like:
 
@@ -111,6 +131,26 @@ For chart-generation normalization, looser wrapper outputs are also accepted whe
 - wrapper containers like `result`, `output`, `payload`, `data`, `response`, or `prediction`
 
 The worker will wrap that output into the stable contract, and downstream chart generation will attempt to normalize those common variants before falling back to heuristic timing/events.
+
+## Wrapper fallback / validation policy
+
+For the current repo-local wrapper, the practical rollout policy is:
+
+1. keep `PIPELINE_AUDIO_ANALYZER_COMMAND` stable and pointed at `scripts/analyzer-wrapper.py`
+2. put the new real backend behind `PIPELINE_ANALYZER_PRIMARY_BACKEND_COMMAND`
+3. keep a known-safe fallback behind `PIPELINE_ANALYZER_FALLBACK_BACKEND_COMMAND`
+4. set `PIPELINE_ANALYZER_FALLBACK_POLICY=on-error-or-invalid`
+5. set `PIPELINE_ANALYZER_VALIDATION_MODE=require-timing` so metadata-only payloads do not silently replace beat/downbeat-capable backends
+
+That gives the pipeline a conservative default:
+
+- **primary succeeds with timing output** → keep the primary result
+- **primary exits non-zero** → fall back to the heuristic backend or madmom spike
+- **primary returns JSON but no recognizable beat/downbeat/subdivision timing** → treat it as invalid for chart timing and fall back
+- **operators want to inspect only the fallback path** → set `PIPELINE_ANALYZER_FALLBACK_POLICY=always`
+- **operators want legacy behavior** → keep using only `PIPELINE_ANALYZER_BACKEND_COMMAND`
+
+The wrapper records the selected backend, fallback policy, validation mode, and fallback reason under `runtime.*` in the backend payload so validation runs and saved artifacts make backend arbitration visible.
 
 ## Fast validation loop
 

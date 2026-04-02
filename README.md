@@ -164,10 +164,19 @@ Example flow:
 
 ```bash
 export PIPELINE_AUDIO_ANALYZER_COMMAND="python3 ./scripts/analyzer-wrapper.py --input {input} --output {output}"
-# default in-repo backend: heuristic beat/downbeat + coarse drum-event candidates
-export PIPELINE_ANALYZER_BACKEND_COMMAND="python3 ./scripts/backend-analyzer.py --input {input} --output {output}"
-# or swap in a future external backend while keeping the wrapper entry point stable
-# export PIPELINE_ANALYZER_BACKEND_COMMAND="python3 /opt/mod/backend-analyzer.py --in {input} --out {output}"
+
+# legacy single-backend mode
+# export PIPELINE_ANALYZER_BACKEND_COMMAND="python3 ./scripts/backend-analyzer.py --input {input} --output {output}"
+
+# preferred rollout mode: new real backend + safety fallback
+export PIPELINE_ANALYZER_PRIMARY_BACKEND_COMMAND="python3 ./scripts/beat-this-backend.py --input {input} --output {output}"
+export PIPELINE_ANALYZER_FALLBACK_BACKEND_COMMAND="python3 ./scripts/backend-analyzer.py --input {input} --output {output}"
+export PIPELINE_ANALYZER_FALLBACK_POLICY=on-error-or-invalid
+export PIPELINE_ANALYZER_VALIDATION_MODE=require-timing
+
+# optional madmom-style fallback spike instead of the heuristic backend
+# export PIPELINE_ANALYZER_FALLBACK_BACKEND_COMMAND="python3 ./scripts/madmom-fallback-backend.py --input {input} --output {output} --beats-file ./scripts/fixtures/madmom-sample.beats.txt --downbeats-file ./scripts/fixtures/madmom-sample.beats.txt"
+
 export PIPELINE_AUDIO_ANALYZER_TIMEOUT_SECONDS=300
 
 swift run MasterOfDrumsPipeline validate-audio-analyzer --source-uri file:///tmp/test.wav --source-type file --requested-by cli
@@ -182,6 +191,35 @@ swift run MasterOfDrumsPipeline list-artifacts --limit 20
 ## Setup Script
 
 A bootstrap script is included at `scripts/setup-pipeline.sh`.
+
+## beat_this Primary Backend Bootstrap
+
+The intended analyzer stack is now:
+
+1. `scripts/analyzer-wrapper.py`
+2. `scripts/beat-this-backend.py`
+3. `scripts/backend-analyzer.py` as automatic fallback when `beat_this` is unavailable or fails
+
+Minimal Python-side bootstrap for the real primary path:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+# install a PyTorch build that matches your platform from https://pytorch.org/get-started/locally/
+pip install tqdm einops soxr rotary-embedding-torch
+pip install https://github.com/CPJKU/beat_this/archive/main.zip
+# ffmpeg is recommended for non-WAV input decoding
+```
+
+Then set:
+
+```bash
+export PIPELINE_AUDIO_ANALYZER_COMMAND="python3 ./scripts/analyzer-wrapper.py --input {input} --output {output}"
+export PIPELINE_ANALYZER_BACKEND_COMMAND="python3 ./scripts/beat-this-backend.py --input {input} --output {output}"
+# optional, explicit fallback override
+export PIPELINE_ANALYZER_FALLBACK_BACKEND_COMMAND="python3 ./scripts/backend-analyzer.py --input {input} --output {output}"
+```
 
 Example usage:
 
@@ -200,5 +238,6 @@ that machine must expose storage to the pipeline host with SQLite-compatible fil
 Treat that as a transitional deployment shape until the pipeline moves to a network database.
 
 Note: this assumes Swift and SQLite development libraries are available on the machine.
+For the primary analyzer path, also install Python 3 plus `beat_this` and its PyTorch/audio dependencies; the backend will otherwise fall back to the repo-local heuristic analyzer.
 
 See `Docs/architecture/standalone-pipeline-plan.md`, `Docs/database/sqlite-schema.md`, `Docs/interfaces/cli-interface-outline.md`, `Docs/interfaces/audio-analysis-contract.md`, `Docs/interfaces/chart-generation-analyzer-stack.md`, `Docs/interfaces/chart-generation-contract.md`, `Docs/interfaces/madmom-fallback-spike.md`, `Docs/research/adtof-feasibility.md`, and `Docs/quality/chart-quality-evaluation.md` for the current corpus/reporting scaffolding and the gap to a real CLI-driven evaluation loop.

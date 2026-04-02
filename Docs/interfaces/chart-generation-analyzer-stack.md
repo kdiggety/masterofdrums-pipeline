@@ -191,6 +191,8 @@ Internally, that wrapper should hide whether it uses:
 
 That keeps the Swift worker contract stable while the analyzer stack evolves.
 
+The repo-local implementation of this recommendation now lives at `scripts/beat-this-backend.py`, intended to sit behind `scripts/analyzer-wrapper.py` via `PIPELINE_ANALYZER_BACKEND_COMMAND`.
+
 ## Final recommendation
 
 If I had to make the MVP call today:

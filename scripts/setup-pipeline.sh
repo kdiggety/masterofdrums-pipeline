@@ -45,6 +45,9 @@ Examples:
 
 Notes:
   - The current pipeline uses SQLite, not Postgres/MySQL.
+  - The default analyzer path is `scripts/analyzer-wrapper.py` -> `scripts/beat-this-backend.py`.
+    Install Python 3 plus PyTorch, ffmpeg, and `beat_this` if you want the primary ML path.
+    Without those deps, the backend can still fall back to `scripts/backend-analyzer.py`.
   - "Separate DB machine" is only practical today if the pipeline host can mount
     a remote volume and SQLite locking works correctly on that filesystem.
   - For production-grade multi-host separation, plan to move the pipeline to a

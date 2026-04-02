@@ -7,6 +7,7 @@ before the real beat/drum analyzer stack is wired in. It demonstrates:
 - required CLI surface: --input / --output
 - optional backend command passthrough for real analyzer integration
 - backend command env fallback so the wrapper entry point can stay stable across backend swaps
+- optional primary/fallback backend selection for validation-driven rollouts
 - optional stdout JSON mode for wrapper authors
 - stable JSON fields the Swift worker can normalize today
 - useful metadata/warnings for downstream debugging
@@ -27,6 +28,26 @@ import sys
 from typing import Any
 
 
+DEFAULT_BACKEND_ENV = "PIPELINE_ANALYZER_BACKEND_COMMAND"
+DEFAULT_PRIMARY_BACKEND_ENV = "PIPELINE_ANALYZER_PRIMARY_BACKEND_COMMAND"
+DEFAULT_FALLBACK_BACKEND_ENV = "PIPELINE_ANALYZER_FALLBACK_BACKEND_COMMAND"
+DEFAULT_FALLBACK_POLICY_ENV = "PIPELINE_ANALYZER_FALLBACK_POLICY"
+DEFAULT_VALIDATION_MODE_ENV = "PIPELINE_ANALYZER_VALIDATION_MODE"
+
+VALID_FALLBACK_POLICIES = {
+    "disabled",
+    "never",
+    "on-error",
+    "on-invalid",
+    "on-error-or-invalid",
+    "always",
+}
+VALID_VALIDATION_MODES = {
+    "none",
+    "require-timing",
+}
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="MasterOfDrums analyzer wrapper")
     parser.add_argument("--input", required=True, help="input audio path")
@@ -43,12 +64,48 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--backend-command",
-        help="optional shell command for a real backend; may use {input} and {output} placeholders",
+        help="legacy single backend shell command; may use {input} and {output} placeholders",
     )
     parser.add_argument(
         "--backend-command-env",
-        default="PIPELINE_ANALYZER_BACKEND_COMMAND",
-        help="environment variable to read the backend command from when --backend-command is omitted (default: PIPELINE_ANALYZER_BACKEND_COMMAND)",
+        default=DEFAULT_BACKEND_ENV,
+        help=f"environment variable to read the legacy backend command from when --backend-command is omitted (default: {DEFAULT_BACKEND_ENV})",
+    )
+    parser.add_argument(
+        "--primary-backend-command",
+        help="primary backend shell command for real analyzer integration; may use {input} and {output} placeholders",
+    )
+    parser.add_argument(
+        "--primary-backend-command-env",
+        default=DEFAULT_PRIMARY_BACKEND_ENV,
+        help=f"environment variable to read the primary backend command from when --primary-backend-command is omitted (default: {DEFAULT_PRIMARY_BACKEND_ENV})",
+    )
+    parser.add_argument(
+        "--fallback-backend-command",
+        help="fallback backend shell command; may use {input} and {output} placeholders",
+    )
+    parser.add_argument(
+        "--fallback-backend-command-env",
+        default=DEFAULT_FALLBACK_BACKEND_ENV,
+        help=f"environment variable to read the fallback backend command from when --fallback-backend-command is omitted (default: {DEFAULT_FALLBACK_BACKEND_ENV})",
+    )
+    parser.add_argument(
+        "--fallback-policy",
+        help="fallback policy: disabled|on-error|on-invalid|on-error-or-invalid|always",
+    )
+    parser.add_argument(
+        "--fallback-policy-env",
+        default=DEFAULT_FALLBACK_POLICY_ENV,
+        help=f"environment variable to read the fallback policy from when --fallback-policy is omitted (default: {DEFAULT_FALLBACK_POLICY_ENV})",
+    )
+    parser.add_argument(
+        "--validation-mode",
+        help="validation mode for primary backend payloads: none|require-timing",
+    )
+    parser.add_argument(
+        "--validation-mode-env",
+        default=DEFAULT_VALIDATION_MODE_ENV,
+        help=f"environment variable to read the validation mode from when --validation-mode is omitted (default: {DEFAULT_VALIDATION_MODE_ENV})",
     )
     parser.add_argument(
         "--backend-stdout-json",
@@ -121,6 +178,100 @@ def render_backend_command(command: str, input_path: str, output_path: str) -> s
     return command.replace("{input}", shell_escape(input_path)).replace("{output}", shell_escape(output_path))
 
 
+def normalize_mode(raw: str | None, *, valid: set[str], default: str, alias_map: dict[str, str] | None = None) -> str:
+    if raw is None:
+        return default
+    value = raw.strip().lower()
+    if alias_map:
+        value = alias_map.get(value, value)
+    if value not in valid:
+        raise RuntimeError(f"unsupported mode '{raw}'; expected one of: {', '.join(sorted(valid))}")
+    return value
+
+
+def env_or_arg(value: str | None, env_name: str | None) -> str | None:
+    if value:
+        return value
+    if env_name:
+        return os.environ.get(env_name)
+    return None
+
+
+def extract_timing_values(node: Any) -> list[float]:
+    results: list[float] = []
+
+    def visit(value: Any) -> None:
+        if value is None:
+            return
+        if isinstance(value, (int, float)):
+            parsed = safe_float(value)
+            if parsed is not None:
+                results.append(parsed)
+            return
+        if isinstance(value, dict):
+            for key in ("seconds", "time", "start", "offset", "position"):
+                if key in value:
+                    visit(value[key])
+                    return
+            return
+        if isinstance(value, list):
+            for item in value:
+                visit(item)
+
+    visit(node)
+    return results
+
+
+TIMING_KEYS = (
+    "beats",
+    "beatTimes",
+    "beat_times",
+    "downbeats",
+    "downbeatTimes",
+    "downbeat_times",
+    "subdivisions",
+    "subdivisionTimes",
+    "subdivision_times",
+    "tatums",
+    "tatumTimes",
+    "tatum_times",
+)
+
+
+def payload_has_timing(payload: dict[str, Any]) -> bool:
+    for key in TIMING_KEYS:
+        values = extract_timing_values(payload.get(key))
+        if values:
+            return True
+
+    timing = payload.get("timing")
+    if isinstance(timing, dict):
+        for key in TIMING_KEYS:
+            values = extract_timing_values(timing.get(key))
+            if values:
+                return True
+
+    raw = payload.get("rawAnalyzerOutput")
+    if isinstance(raw, dict):
+        return payload_has_timing(raw)
+
+    for container_key in ("result", "output", "payload", "data", "response", "prediction"):
+        nested = payload.get(container_key)
+        if isinstance(nested, dict) and payload_has_timing(nested):
+            return True
+
+    return False
+
+
+def validate_backend_payload(payload: dict[str, Any], validation_mode: str) -> list[str]:
+    issues: list[str] = []
+    if validation_mode == "none":
+        return issues
+    if validation_mode == "require-timing" and not payload_has_timing(payload):
+        issues.append("payload did not contain recognizable beat/downbeat/subdivision timing")
+    return issues
+
+
 def run_backend_command(command: str, input_path: str, output_path: str, allow_stdout_json: bool) -> dict[str, Any]:
     rendered = render_backend_command(command, input_path=input_path, output_path=output_path)
     result = subprocess.run(rendered, shell=True, check=False, capture_output=True, text=True, env=os.environ.copy())
@@ -151,31 +302,151 @@ def run_backend_command(command: str, input_path: str, output_path: str, allow_s
     raise RuntimeError(" | ".join(details))
 
 
-def run_real_analyzer(input_path: str, output_path: str, probe_only: bool, backend_command: str | None, backend_stdout_json: bool) -> dict[str, Any]:
-    if backend_command:
-        payload = run_backend_command(
-            backend_command,
+def annotate_backend_runtime(payload: dict[str, Any], *, selected_backend: str, selected_command: str, fallback_policy: str, validation_mode: str, fallback_used: bool, fallback_reason: str | None, primary_command: str | None, fallback_command: str | None) -> None:
+    runtime = payload.setdefault("runtime", {})
+    if isinstance(runtime, dict):
+        runtime.setdefault("wrapper", "scripts/analyzer-wrapper.py")
+        runtime.setdefault("backendCommand", selected_command)
+        runtime.setdefault("selectedBackend", selected_backend)
+        runtime.setdefault("fallbackPolicy", fallback_policy)
+        runtime.setdefault("validationMode", validation_mode)
+        runtime.setdefault("fallbackUsed", fallback_used)
+        runtime.setdefault("fallbackReason", fallback_reason)
+        runtime.setdefault("primaryBackendCommand", primary_command)
+        runtime.setdefault("fallbackBackendCommand", fallback_command)
+        runtime.setdefault("inputPath", input_path := os.environ.get("PIPELINE_ANALYZER_INPUT_PATH"))
+        runtime.setdefault("outputPath", os.environ.get("PIPELINE_ANALYZER_OUTPUT_PATH"))
+        runtime.setdefault("workflowID", os.environ.get("PIPELINE_ANALYZER_WORKFLOW_ID"))
+        runtime.setdefault("jobID", os.environ.get("PIPELINE_ANALYZER_JOB_ID"))
+        runtime.setdefault("requestedBy", os.environ.get("PIPELINE_ANALYZER_REQUESTED_BY"))
+        runtime.setdefault("sourceType", os.environ.get("PIPELINE_ANALYZER_SOURCE_TYPE"))
+        runtime.setdefault("sourceURI", os.environ.get("PIPELINE_ANALYZER_SOURCE_URI"))
+        runtime.setdefault("schemaURI", os.environ.get("PIPELINE_ANALYZER_CONTRACT_SCHEMA_URI"))
+        runtime.setdefault("schemaVersion", os.environ.get("PIPELINE_ANALYZER_CONTRACT_SCHEMA_VERSION"))
+        if input_path is None:
+            runtime.pop("inputPath", None)
+
+
+def append_warning(payload: dict[str, Any], message: str) -> None:
+    warnings = payload.setdefault("warnings", [])
+    if isinstance(warnings, list):
+        warnings.append(message)
+
+
+def run_primary_fallback_backends(*, input_path: str, output_path: str, primary_command: str | None, fallback_command: str | None, fallback_policy: str, validation_mode: str, allow_stdout_json: bool) -> dict[str, Any]:
+    if not primary_command and fallback_command:
+        fallback_payload = run_backend_command(fallback_command, input_path=input_path, output_path=output_path, allow_stdout_json=allow_stdout_json)
+        annotate_backend_runtime(
+            fallback_payload,
+            selected_backend="fallback",
+            selected_command=fallback_command,
+            fallback_policy=fallback_policy,
+            validation_mode=validation_mode,
+            fallback_used=True,
+            fallback_reason="primary backend command not configured",
+            primary_command=primary_command,
+            fallback_command=fallback_command,
+        )
+        append_warning(fallback_payload, "analyzer wrapper used fallback backend because no primary backend command was configured")
+        return fallback_payload
+
+    if not primary_command:
+        raise RuntimeError("no analyzer backend command was configured")
+
+    if fallback_policy == "always" and fallback_command:
+        fallback_payload = run_backend_command(fallback_command, input_path=input_path, output_path=output_path, allow_stdout_json=allow_stdout_json)
+        annotate_backend_runtime(
+            fallback_payload,
+            selected_backend="fallback",
+            selected_command=fallback_command,
+            fallback_policy=fallback_policy,
+            validation_mode=validation_mode,
+            fallback_used=True,
+            fallback_reason="fallback policy forced fallback backend",
+            primary_command=primary_command,
+            fallback_command=fallback_command,
+        )
+        append_warning(fallback_payload, "analyzer wrapper skipped primary backend because fallback policy was set to always")
+        return fallback_payload
+
+    try:
+        payload = run_backend_command(primary_command, input_path=input_path, output_path=output_path, allow_stdout_json=allow_stdout_json)
+    except RuntimeError as exc:
+        if fallback_command and fallback_policy in {"on-error", "on-error-or-invalid"}:
+            fallback_payload = run_backend_command(fallback_command, input_path=input_path, output_path=output_path, allow_stdout_json=allow_stdout_json)
+            annotate_backend_runtime(
+                fallback_payload,
+                selected_backend="fallback",
+                selected_command=fallback_command,
+                fallback_policy=fallback_policy,
+                validation_mode=validation_mode,
+                fallback_used=True,
+                fallback_reason=f"primary backend failed: {exc}",
+                primary_command=primary_command,
+                fallback_command=fallback_command,
+            )
+            append_warning(fallback_payload, f"analyzer wrapper fell back after primary backend failure: {exc}")
+            return fallback_payload
+        raise
+
+    issues = validate_backend_payload(payload, validation_mode)
+    if issues and fallback_command and fallback_policy in {"on-invalid", "on-error-or-invalid"}:
+        fallback_payload = run_backend_command(fallback_command, input_path=input_path, output_path=output_path, allow_stdout_json=allow_stdout_json)
+        annotate_backend_runtime(
+            fallback_payload,
+            selected_backend="fallback",
+            selected_command=fallback_command,
+            fallback_policy=fallback_policy,
+            validation_mode=validation_mode,
+            fallback_used=True,
+            fallback_reason="; ".join(issues),
+            primary_command=primary_command,
+            fallback_command=fallback_command,
+        )
+        append_warning(fallback_payload, f"analyzer wrapper fell back after primary backend validation failed: {'; '.join(issues)}")
+        return fallback_payload
+
+    annotate_backend_runtime(
+        payload,
+        selected_backend="primary",
+        selected_command=primary_command,
+        fallback_policy=fallback_policy,
+        validation_mode=validation_mode,
+        fallback_used=False,
+        fallback_reason="; ".join(issues) if issues else None,
+        primary_command=primary_command,
+        fallback_command=fallback_command,
+    )
+    append_warning(payload, "analyzer wrapper delegated to backend command")
+    if issues:
+        append_warning(payload, f"analyzer wrapper primary backend validation warning: {'; '.join(issues)}")
+    return payload
+
+
+def run_real_analyzer(
+    input_path: str,
+    output_path: str,
+    probe_only: bool,
+    backend_command: str | None,
+    primary_backend_command: str | None,
+    fallback_backend_command: str | None,
+    fallback_policy: str,
+    validation_mode: str,
+    backend_stdout_json: bool,
+) -> dict[str, Any]:
+    selected_primary = primary_backend_command or backend_command
+    selected_fallback = fallback_backend_command
+
+    if selected_primary or selected_fallback:
+        return run_primary_fallback_backends(
             input_path=input_path,
             output_path=output_path,
+            primary_command=selected_primary,
+            fallback_command=selected_fallback,
+            fallback_policy=fallback_policy,
+            validation_mode=validation_mode,
             allow_stdout_json=backend_stdout_json,
         )
-        runtime = payload.setdefault("runtime", {})
-        if isinstance(runtime, dict):
-            runtime.setdefault("wrapper", "scripts/analyzer-wrapper.py")
-            runtime.setdefault("backendCommand", backend_command)
-            runtime.setdefault("inputPath", input_path)
-            runtime.setdefault("outputPath", os.environ.get("PIPELINE_ANALYZER_OUTPUT_PATH"))
-            runtime.setdefault("workflowID", os.environ.get("PIPELINE_ANALYZER_WORKFLOW_ID"))
-            runtime.setdefault("jobID", os.environ.get("PIPELINE_ANALYZER_JOB_ID"))
-            runtime.setdefault("requestedBy", os.environ.get("PIPELINE_ANALYZER_REQUESTED_BY"))
-            runtime.setdefault("sourceType", os.environ.get("PIPELINE_ANALYZER_SOURCE_TYPE"))
-            runtime.setdefault("sourceURI", os.environ.get("PIPELINE_ANALYZER_SOURCE_URI"))
-            runtime.setdefault("schemaURI", os.environ.get("PIPELINE_ANALYZER_CONTRACT_SCHEMA_URI"))
-            runtime.setdefault("schemaVersion", os.environ.get("PIPELINE_ANALYZER_CONTRACT_SCHEMA_VERSION"))
-        warnings = payload.setdefault("warnings", [])
-        if isinstance(warnings, list):
-            warnings.append("analyzer wrapper delegated to backend command")
-        return payload
 
     # Real analyzer integration point.
     # In the short term we keep this honest: metadata-only output, no fake beats/events.
@@ -210,6 +481,9 @@ def run_real_analyzer(input_path: str, output_path: str, probe_only: bool, backe
         "note": "Analyzer wrapper emitted metadata-only output; add beat/downbeat/drum-event extraction in the backend.",
         "runtime": {
             "wrapper": "scripts/analyzer-wrapper.py",
+            "fallbackPolicy": fallback_policy,
+            "validationMode": validation_mode,
+            "fallbackUsed": False,
             "inputPath": input_path,
             "outputPath": os.environ.get("PIPELINE_ANALYZER_OUTPUT_PATH"),
             "workflowID": os.environ.get("PIPELINE_ANALYZER_WORKFLOW_ID"),
@@ -232,15 +506,31 @@ def main() -> int:
     output_path = pathlib.Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    backend_command = args.backend_command
-    if not backend_command and args.backend_command_env:
-        backend_command = os.environ.get(args.backend_command_env)
+    legacy_backend_command = env_or_arg(args.backend_command, args.backend_command_env)
+    primary_backend_command = env_or_arg(args.primary_backend_command, args.primary_backend_command_env)
+    fallback_backend_command = env_or_arg(args.fallback_backend_command, args.fallback_backend_command_env)
+
+    fallback_policy = normalize_mode(
+        env_or_arg(args.fallback_policy, args.fallback_policy_env),
+        valid=VALID_FALLBACK_POLICIES,
+        default="disabled",
+        alias_map={"never": "disabled", "on-failure": "on-error", "on-validate-failure": "on-invalid"},
+    )
+    validation_mode = normalize_mode(
+        env_or_arg(args.validation_mode, args.validation_mode_env),
+        valid=VALID_VALIDATION_MODES,
+        default="none",
+    )
 
     payload = run_real_analyzer(
         args.input,
         args.output,
         probe_only=args.probe_only,
-        backend_command=backend_command,
+        backend_command=legacy_backend_command,
+        primary_backend_command=primary_backend_command,
+        fallback_backend_command=fallback_backend_command,
+        fallback_policy=fallback_policy,
+        validation_mode=validation_mode,
         backend_stdout_json=args.backend_stdout_json,
     )
     text = json.dumps(payload, sort_keys=True)
