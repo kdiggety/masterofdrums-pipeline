@@ -19,7 +19,9 @@ Example:
 
 ```bash
 PIPELINE_AUDIO_ANALYZER_COMMAND="python3 ./scripts/analyzer-wrapper.py --input {input} --output {output}"
-PIPELINE_ANALYZER_BACKEND_COMMAND="python3 /opt/mod/backend-analyzer.py --in {input} --out {output}"
+PIPELINE_ANALYZER_BACKEND_COMMAND="python3 ./scripts/backend-analyzer.py --input {input} --output {output}"
+# or point the backend env var at another analyzer implementation later
+# PIPELINE_ANALYZER_BACKEND_COMMAND="python3 /opt/mod/backend-analyzer.py --in {input} --out {output}"
 PIPELINE_AUDIO_ANALYZER_TIMEOUT_SECONDS=300
 PIPELINE_AUDIO_ANALYZER_STDOUT_JSON=false
 ```

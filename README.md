@@ -134,7 +134,7 @@ Implemented so far:
 - domain/application/runtime structure
 - SQLite schema definition and DB-first docs
 - CLI-oriented runtime direction
-- analyzer runtime integration with timeout/stdout-fallback controls, a direct `validate-audio-analyzer` smoke-test command, and a concrete wrapper example (`scripts/analyzer-wrapper.py`)
+- analyzer runtime integration with timeout/stdout-fallback controls, a direct `validate-audio-analyzer` smoke-test command, a concrete wrapper example (`scripts/analyzer-wrapper.py`), and a repo-local heuristic backend scaffold (`scripts/backend-analyzer.py`) that emits beats/downbeats/segments/drum-event candidates without external ML dependencies
 
 Still to implement:
 
@@ -157,8 +157,10 @@ The repo is now aimed at a first testable CLI + SQLite slice:
 Example flow:
 
 ```bash
-export PIPELINE_AUDIO_ANALYZER_COMMAND="python3 ./scripts/analyzer-wrapper.py --input {input} --output {output} --probe-only"
-# or keep the wrapper command stable and swap the real backend underneath it
+export PIPELINE_AUDIO_ANALYZER_COMMAND="python3 ./scripts/analyzer-wrapper.py --input {input} --output {output}"
+# default in-repo backend: heuristic beat/downbeat + coarse drum-event candidates
+export PIPELINE_ANALYZER_BACKEND_COMMAND="python3 ./scripts/backend-analyzer.py --input {input} --output {output}"
+# or swap in a future external backend while keeping the wrapper entry point stable
 # export PIPELINE_ANALYZER_BACKEND_COMMAND="python3 /opt/mod/backend-analyzer.py --in {input} --out {output}"
 export PIPELINE_AUDIO_ANALYZER_TIMEOUT_SECONDS=300
 
