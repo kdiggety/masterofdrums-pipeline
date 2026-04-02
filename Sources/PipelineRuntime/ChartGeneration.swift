@@ -394,7 +394,7 @@ enum ChartGenerator {
         guard !events.isEmpty else { return [] }
 
         let groupedByBeat = Dictionary(grouping: events) { $0.onsetBeatIndex ?? -1 }
-        return groupedByBeat.keys.sorted().flatMap { beatIndex in
+        return groupedByBeat.keys.sorted().flatMap { beatIndex -> [DetectedDrumEvent] in
             guard let beatEvents = groupedByBeat[beatIndex] else { return [] }
 
             let kicksAndSnares = beatEvents
