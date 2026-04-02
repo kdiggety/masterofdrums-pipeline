@@ -35,6 +35,7 @@ HOP_SIZE = 512
 MIN_EVENT_GAP_SECONDS = 0.12
 MAX_EVENT_GAP_SECONDS = 1.5
 DEFAULT_TEMPO_BPM = 120.0
+FFMPEG_DECODE_TIMEOUT_SECONDS = 20
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -98,6 +99,7 @@ def read_wav_pcm(path: str) -> tuple[list[float], int]:
 def decode_with_ffmpeg(path: str) -> tuple[list[float], int]:
     command = [
         "ffmpeg",
+        "-nostdin",
         "-v",
         "error",
         "-i",
@@ -112,12 +114,24 @@ def decode_with_ffmpeg(path: str) -> tuple[list[float], int]:
         str(TARGET_SAMPLE_RATE),
         "-",
     ]
-    result = subprocess.run(command, capture_output=True, check=False)
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            check=False,
+            timeout=FFMPEG_DECODE_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"ffmpeg decode timed out after {FFMPEG_DECODE_TIMEOUT_SECONDS}s for input: {path}"
+        ) from exc
     if result.returncode != 0:
         stderr = result.stderr.decode("utf-8", errors="replace").strip()
         raise RuntimeError(f"ffmpeg decode failed with status {result.returncode}: {stderr}")
     raw = result.stdout
     sample_count = len(raw) // 2
+    if sample_count == 0:
+        raise RuntimeError("ffmpeg decode produced no PCM samples")
     ints = struct.unpack("<" + "h" * sample_count, raw)
     samples = [value / 32768.0 for value in ints]
     return samples, TARGET_SAMPLE_RATE
@@ -132,7 +146,15 @@ def load_audio(path: str) -> tuple[list[float], int, list[str]]:
             return samples, sample_rate, warnings
         except (wave.Error, EOFError, OSError) as exc:
             warnings.append(f"wav decode failed, falling back to ffmpeg: {exc}")
-    samples, sample_rate = decode_with_ffmpeg(path)
+    try:
+        samples, sample_rate = decode_with_ffmpeg(path)
+    except RuntimeError as exc:
+        if suffix == ".wav":
+            raise
+        raise RuntimeError(
+            "non-WAV decode failed; MP3/other compressed inputs require a working ffmpeg binary and must complete within "
+            f"{FFMPEG_DECODE_TIMEOUT_SECONDS}s: {exc}"
+        ) from exc
     warnings.append("decoded input through ffmpeg backend")
     return samples, sample_rate, warnings
 
