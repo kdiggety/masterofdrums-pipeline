@@ -92,9 +92,14 @@ final class ChartGenerationTests: XCTestCase {
         XCTAssertEqual(generated.normalized.drumEvents.count, 1)
         XCTAssertEqual(generated.normalized.drumEvents[0].lane, .tomLow)
         XCTAssertEqual(try XCTUnwrap(generated.baseChart.chart.notes[0].velocity), 1.0, accuracy: 0.0001)
+        XCTAssertEqual(generated.normalized.drumEventDiagnostics?.rawCandidateCount, 3)
+        XCTAssertEqual(generated.normalized.drumEventDiagnostics?.mappedCandidateCount, 1)
+        XCTAssertEqual(generated.normalized.drumEventDiagnostics?.postShapingEventCount, 1)
+        XCTAssertEqual(generated.baseChart.drumEventDiagnostics?.rawCandidateCount, 3)
         XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("without onset timing") }))
         XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("unmapped lanes") }))
         XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("Mapped 1 of 3 analyzer drum-event candidates") }))
+        XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("raw=3 mapped=1 post-shaping=1") }))
     }
 
     func testGenerateDeduplicatesAnalyzerEventsThatCollapseIntoSameQuantizedLaneSlot() throws {
@@ -116,7 +121,13 @@ final class ChartGenerationTests: XCTestCase {
         XCTAssertEqual(generated.normalized.drumEvents.count, 2)
         XCTAssertEqual(generated.normalized.drumEvents.map(\.eventID), ["kick", "snare-strong"])
         XCTAssertEqual(generated.baseChart.chart.notes.map(\.tick), [0, 480])
+        XCTAssertEqual(generated.normalized.drumEventDiagnostics?.rawCandidateCount, 3)
+        XCTAssertEqual(generated.normalized.drumEventDiagnostics?.mappedCandidateCount, 3)
+        XCTAssertEqual(generated.normalized.drumEventDiagnostics?.postShapingEventCount, 2)
+        XCTAssertEqual(generated.normalized.drumEventDiagnostics?.deduplicatedCandidateCount, 1)
+        XCTAssertEqual(generated.normalized.drumEventDiagnostics?.shapingReductionCount, 1)
         XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("Collapsed 1 analyzer drum-event duplicates") }))
+        XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("raw=3 mapped=3 post-shaping=2") }))
     }
 
 
@@ -246,7 +257,7 @@ final class ChartGenerationTests: XCTestCase {
         XCTAssertFalse(generated.normalized.warnings.contains(where: { $0.contains("unmapped lanes") }))
     }
 
-    func testGenerateShapesBeatThisStyleHatSpamIntoPulseAndSelectiveTexture() throws {
+    func testGenerateShapesBeatThisStyleHatSpamIntoKickAnchoredPulseAndSelectiveTexture() throws {
         let analysis = makeAnalysis(raw: [
             "beats": [0.0, 0.5, 1.0, 1.5, 2.0],
             "drumEvents": [
@@ -279,9 +290,85 @@ final class ChartGenerationTests: XCTestCase {
             normalizedAnalysisArtifactURI: "file:///tmp/normalized.json"
         )
 
-        XCTAssertEqual(generated.normalized.drumEvents.filter { $0.lane == .hihatClosed }.count, 6)
-        XCTAssertEqual(generated.baseChart.chart.notes.filter { $0.lane == .hihatClosed }.map(\.subdivisionIndex), [0, 1, 4, 8, 9, 12])
+        XCTAssertEqual(generated.normalized.drumEvents.filter { $0.lane == .hihatClosed }.count, 4)
+        XCTAssertEqual(generated.baseChart.chart.notes.count, generated.normalized.drumEvents.count)
+        XCTAssertEqual(generated.baseChart.chart.notes.map(\.lane), generated.normalized.drumEvents.map(\.lane))
+        XCTAssertEqual(generated.baseChart.chart.notes.map(\.subdivisionIndex), generated.normalized.drumEvents.compactMap(\.onsetSubdivisionIndex))
+        XCTAssertEqual(generated.baseChart.chart.notes.filter { $0.lane == .hihatClosed }.map(\.subdivisionIndex), [0, 1, 8, 9])
         XCTAssertEqual(generated.baseChart.chart.notes.filter { $0.lane == .kick || $0.lane == .snare }.map(\.lane), [.kick, .snare, .kick, .snare])
+    }
+
+    func testGenerateKeepsSparseHatPulseOnHatOnlyDownbeatsWithoutDroppingBackbone() throws {
+        let analysis = makeAnalysis(raw: [
+            "beats": [0.0, 0.5, 1.0, 1.5, 2.0],
+            "drumEvents": [
+                ["eventID": "hat-1a", "label": "closed hat", "onsetSeconds": 0.0, "velocity": 0.55],
+                ["eventID": "hat-1b", "label": "closed hat", "onsetSeconds": 0.125, "velocity": 0.52],
+                ["eventID": "snare-2", "label": "snare", "onsetSeconds": 0.5, "velocity": 0.92],
+                ["eventID": "hat-2a", "label": "closed hat", "onsetSeconds": 0.5, "velocity": 0.55],
+                ["eventID": "kick-3", "label": "kick", "onsetSeconds": 1.0, "velocity": 0.90],
+                ["eventID": "hat-3a", "label": "closed hat", "onsetSeconds": 1.0, "velocity": 0.55],
+                ["eventID": "hat-3b", "label": "closed hat", "onsetSeconds": 1.125, "velocity": 0.52],
+                ["eventID": "snare-4", "label": "snare", "onsetSeconds": 1.5, "velocity": 0.92],
+                ["eventID": "hat-4a", "label": "closed hat", "onsetSeconds": 1.5, "velocity": 0.55]
+            ]
+        ], duration: 2.0)
+
+        let generated = ChartGenerator.generate(
+            from: analysis,
+            generatedAt: Date(timeIntervalSince1970: 0),
+            normalizedAnalysisArtifactURI: "file:///tmp/normalized.json"
+        )
+
+        XCTAssertEqual(generated.baseChart.chart.notes.map(\.lane), [.hihatClosed, .snare, .kick, .hihatClosed, .hihatClosed, .snare])
+        XCTAssertEqual(generated.baseChart.chart.notes.filter { $0.lane == .hihatClosed }.map(\.subdivisionIndex), [0, 8, 9])
+    }
+
+    func testGeneratePrefersSingleBackboneLanePerBeatAndDropsSameBeatHatPileups() throws {
+        let analysis = makeAnalysis(raw: [
+            "beats": [0.0, 0.5, 1.0],
+            "drumEvents": [
+                ["eventID": "kick-1", "label": "kick", "onsetSeconds": 0.0, "velocity": 0.95, "confidence": 0.95],
+                ["eventID": "snare-1", "label": "snare", "onsetSeconds": 0.0, "velocity": 0.70, "confidence": 0.70],
+                ["eventID": "hat-1", "label": "closed hat", "onsetSeconds": 0.0, "velocity": 0.55],
+                ["eventID": "hat-2", "label": "closed hat", "onsetSeconds": 0.125, "velocity": 0.50],
+                ["eventID": "snare-2", "label": "snare", "onsetSeconds": 0.5, "velocity": 0.94, "confidence": 0.94],
+                ["eventID": "kick-2", "label": "kick", "onsetSeconds": 0.5, "velocity": 0.60, "confidence": 0.60],
+                ["eventID": "hat-3", "label": "closed hat", "onsetSeconds": 0.5, "velocity": 0.55],
+                ["eventID": "hat-4", "label": "closed hat", "onsetSeconds": 0.625, "velocity": 0.50]
+            ]
+        ])
+
+        let generated = ChartGenerator.generate(
+            from: analysis,
+            generatedAt: Date(timeIntervalSince1970: 0),
+            normalizedAnalysisArtifactURI: "file:///tmp/normalized.json"
+        )
+
+        XCTAssertEqual(generated.normalized.drumEvents.map(\.eventID), ["kick-1", "hat-1", "hat-2", "snare-2"])
+        XCTAssertEqual(generated.baseChart.chart.notes.map(\.lane), [.kick, .hihatClosed, .hihatClosed, .snare])
+        XCTAssertEqual(generated.baseChart.chart.notes.map(\.subdivisionIndex), [0, 0, 1, 4])
+    }
+
+    func testGenerateKeepsCrashAccentOnDownbeatWithoutKeepingExtraBackboneStack() throws {
+        let analysis = makeAnalysis(raw: [
+            "beats": [0.0, 0.5, 1.0],
+            "drumEvents": [
+                ["eventID": "kick", "label": "kick", "onsetSeconds": 0.0, "velocity": 0.95],
+                ["eventID": "snare", "label": "snare", "onsetSeconds": 0.0, "velocity": 0.60],
+                ["eventID": "crash", "label": "crash", "onsetSeconds": 0.0, "velocity": 0.90],
+                ["eventID": "hat", "label": "closed hat", "onsetSeconds": 0.125, "velocity": 0.50]
+            ]
+        ])
+
+        let generated = ChartGenerator.generate(
+            from: analysis,
+            generatedAt: Date(timeIntervalSince1970: 0),
+            normalizedAnalysisArtifactURI: "file:///tmp/normalized.json"
+        )
+
+        XCTAssertEqual(generated.normalized.drumEvents.map(\.lane), [.kick, .crash, .hihatClosed])
+        XCTAssertEqual(generated.baseChart.chart.notes.map(\.lane), [.kick, .crash, .hihatClosed])
     }
 
     func testGenerateFallsBackToDeterministicQuarterNoteGridWithoutAnalyzerEvents() throws {

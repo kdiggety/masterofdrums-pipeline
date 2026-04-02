@@ -10,17 +10,18 @@ enum ChartGenerator {
     private static let fallbackSubdivisionsPerBeat = 4
     private static let supportedSubdivisionCandidates = [3, 4, 6, 8]
     private static let maxClosedHihatPulsePerBeat = 1
+    private static let maxHiHatTexturePerBeat = 1
+    private static let sparseHatPulseBeatsInBar: Set<Int> = [0]
 
     static func generate(from analysis: AudioAnalysisContract, generatedAt: Date, normalizedAnalysisArtifactURI: String) -> ChartGenerationOutput {
         let timeSignature = TimeSignature(numerator: 4, denominator: 4)
         let ticksPerBeat = 480
         let beatGrid = makeBeatGrid(from: analysis, timeSignature: timeSignature)
         let drumEventResult = makeDrumEvents(from: analysis, beatGrid: beatGrid)
-        let drumEvents = drumEventResult.events
         let measures = makeMeasures(from: beatGrid, timeSignature: timeSignature)
         let warnings = combinedWarnings(for: analysis, beatGrid: beatGrid, drumEventDiagnostics: drumEventResult.diagnostics)
         let detectedSubdivisionCount = inferredSubdivisionsPerBeat(from: beatGrid)
-        let usedAnalyzerEvents = drumEvents.contains(where: { !($0.sourceLabel ?? "").hasPrefix("heuristic_") })
+        let usedAnalyzerEvents = drumEventResult.events.contains(where: { !($0.sourceLabel ?? "").hasPrefix("heuristic_") })
 
         let normalized = NormalizedAnalysisContract(
             source: NormalizedAnalysisSource(
@@ -36,19 +37,20 @@ enum ChartGenerator {
                 downbeatOffsetSeconds: analysis.analysis.downbeatOffsetSeconds,
                 beatCount: Set(beatGrid.map(\.beatIndex)).count,
                 barCount: measures.count,
-                drumEventCount: drumEvents.count,
+                drumEventCount: drumEventResult.events.count,
                 predominantTimeSignature: timeSignature,
                 confidence: analysis.analysis.confidence
             ),
             beatGrid: beatGrid,
-            drumEvents: drumEvents,
+            drumEvents: drumEventResult.events,
+            drumEventDiagnostics: drumEventResult.diagnostics,
             warnings: warnings,
             note: usedAnalyzerEvents
                 ? "Normalized analysis generated from analyzer timing/event output with \(detectedSubdivisionCount)x subdivision anchors per beat."
                 : "Heuristic normalization generated from coarse analysis summary with \(detectedSubdivisionCount)x fallback subdivision anchors per beat."
         )
 
-        let notes = makeChartNotes(from: drumEvents, ticksPerBeat: ticksPerBeat, beatGrid: beatGrid)
+        let notes = makeChartNotes(from: normalized.drumEvents, ticksPerBeat: ticksPerBeat, beatGrid: beatGrid)
         let lanes = Array(Set(notes.map(\.lane))).sorted { $0.rawValue < $1.rawValue }
         let baseChart = BaseChartContract(
             source: BaseChartSource(
@@ -66,6 +68,7 @@ enum ChartGenerator {
                 measures: measures,
                 notes: notes
             ),
+            drumEventDiagnostics: drumEventResult.diagnostics,
             warnings: warnings,
             note: usedAnalyzerEvents
                 ? "Base chart generated from analyzer timing and mapped drum-event candidates using \(detectedSubdivisionCount)x quantization."
@@ -75,23 +78,14 @@ enum ChartGenerator {
         return ChartGenerationOutput(normalized: normalized, baseChart: baseChart)
     }
 
-    private struct DrumEventDiagnostics {
-        let usedFallback: Bool
-        let totalCandidates: Int
-        let mappedCandidates: Int
-        let deduplicatedCandidates: Int
-        let droppedMissingOnset: Int
-        let droppedUnknownLane: Int
+    private struct DrumEventResult {
+        let events: [DetectedDrumEvent]
+        let diagnostics: DrumEventDiagnostics
         let maxQuantizationErrorSeconds: Double?
         let laneMappingsUsed: Set<DrumLane>
     }
 
-    private struct DrumEventResult {
-        let events: [DetectedDrumEvent]
-        let diagnostics: DrumEventDiagnostics
-    }
-
-    private static func combinedWarnings(for analysis: AudioAnalysisContract, beatGrid: [BeatGridEvent], drumEventDiagnostics: DrumEventDiagnostics) -> [String] {
+    private static func combinedWarnings(for analysis: AudioAnalysisContract, beatGrid: [BeatGridEvent], drumEventDiagnostics: DrumEventResult) -> [String] {
         var warnings = analysis.warnings
         if analysis.analysis.estimatedTempoBPM == nil {
             warnings.append("No analyzer tempo found; fallback 120 BPM grid used for chart-generation staging.")
@@ -102,20 +96,23 @@ enum ChartGenerator {
         if beatGrid.isEmpty {
             warnings.append("No usable beat grid anchors were available; chart timing may be incomplete.")
         }
-        if drumEventDiagnostics.usedFallback {
+        if drumEventDiagnostics.diagnostics.usedFallback {
             warnings.append("Analyzer did not provide usable drum-event candidates; emitted heuristic playable groove instead.")
         }
-        if drumEventDiagnostics.droppedMissingOnset > 0 {
-            warnings.append("Dropped \(drumEventDiagnostics.droppedMissingOnset) drum-event candidates without onset timing.")
+        if drumEventDiagnostics.diagnostics.droppedMissingOnsetCount > 0 {
+            warnings.append("Dropped \(drumEventDiagnostics.diagnostics.droppedMissingOnsetCount) drum-event candidates without onset timing.")
         }
-        if drumEventDiagnostics.droppedUnknownLane > 0 {
-            warnings.append("Dropped \(drumEventDiagnostics.droppedUnknownLane) drum-event candidates with unmapped lanes.")
+        if drumEventDiagnostics.diagnostics.droppedUnknownLaneCount > 0 {
+            warnings.append("Dropped \(drumEventDiagnostics.diagnostics.droppedUnknownLaneCount) drum-event candidates with unmapped lanes.")
         }
-        if drumEventDiagnostics.deduplicatedCandidates > 0 {
-            warnings.append("Collapsed \(drumEventDiagnostics.deduplicatedCandidates) analyzer drum-event duplicates that landed on the same lane and quantized slot.")
+        if drumEventDiagnostics.diagnostics.deduplicatedCandidateCount > 0 {
+            warnings.append("Collapsed \(drumEventDiagnostics.diagnostics.deduplicatedCandidateCount) analyzer drum-event duplicates that landed on the same lane and quantized slot.")
         }
-        if drumEventDiagnostics.totalCandidates > 0, drumEventDiagnostics.mappedCandidates < drumEventDiagnostics.totalCandidates {
-            warnings.append("Mapped \(drumEventDiagnostics.mappedCandidates) of \(drumEventDiagnostics.totalCandidates) analyzer drum-event candidates into gameplay lanes.")
+        if drumEventDiagnostics.diagnostics.shapingReductionCount > 0 {
+            warnings.append("Reduced analyzer-driven drum events by \(drumEventDiagnostics.diagnostics.shapingReductionCount) during normalization shaping before base-chart note generation.")
+        }
+        if drumEventDiagnostics.diagnostics.rawCandidateCount > 0, drumEventDiagnostics.diagnostics.mappedCandidateCount < drumEventDiagnostics.diagnostics.rawCandidateCount {
+            warnings.append("Mapped \(drumEventDiagnostics.diagnostics.mappedCandidateCount) of \(drumEventDiagnostics.diagnostics.rawCandidateCount) analyzer drum-event candidates into gameplay lanes.")
         }
         if let maxError = drumEventDiagnostics.maxQuantizationErrorSeconds, maxError > 0.05 {
             warnings.append(String(format: "Quantization drift reached %.3f seconds at the furthest mapped drum event.", maxError))
@@ -317,13 +314,17 @@ enum ChartGenerator {
         if !reduced.events.isEmpty {
             return DrumEventResult(
                 events: reduced.events,
-                diagnostics: DrumEventDiagnostics(
-                    usedFallback: false,
-                    totalCandidates: candidates.count,
-                    mappedCandidates: reduced.events.count,
-                    deduplicatedCandidates: reduced.deduplicatedCandidates,
-                    droppedMissingOnset: droppedMissingOnset,
-                    droppedUnknownLane: droppedUnknownLane,
+                diagnostics: DrumEventDiagnosticsResult(
+                    counts: DrumEventDiagnostics(
+                        rawCandidateCount: candidates.count,
+                        mappedCandidateCount: mapped.count,
+                        postShapingEventCount: reduced.events.count,
+                        usedFallback: false,
+                        droppedMissingOnsetCount: droppedMissingOnset,
+                        droppedUnknownLaneCount: droppedUnknownLane,
+                        deduplicatedCandidateCount: reduced.deduplicatedCandidates,
+                        shapingReductionCount: max(mapped.count - reduced.events.count, 0)
+                    ),
                     maxQuantizationErrorSeconds: observedQuantization ? maxQuantizationError : nil,
                     laneMappingsUsed: mappedLanes
                 )
@@ -333,13 +334,17 @@ enum ChartGenerator {
         let fallback = heuristicDrumEvents(from: beatGrid, confidence: analysis.analysis.confidence)
         return DrumEventResult(
             events: fallback,
-            diagnostics: DrumEventDiagnostics(
-                usedFallback: true,
-                totalCandidates: candidates.count,
-                mappedCandidates: 0,
-                deduplicatedCandidates: 0,
-                droppedMissingOnset: droppedMissingOnset,
-                droppedUnknownLane: droppedUnknownLane,
+            diagnostics: DrumEventDiagnosticsResult(
+                counts: DrumEventDiagnostics(
+                    rawCandidateCount: candidates.count,
+                    mappedCandidateCount: mapped.count,
+                    postShapingEventCount: fallback.count,
+                    usedFallback: true,
+                    droppedMissingOnsetCount: droppedMissingOnset,
+                    droppedUnknownLaneCount: droppedUnknownLane,
+                    deduplicatedCandidateCount: 0,
+                    shapingReductionCount: 0
+                ),
                 maxQuantizationErrorSeconds: nil,
                 laneMappingsUsed: Set(fallback.map(\.lane))
             )
@@ -390,6 +395,10 @@ enum ChartGenerator {
         return lhs.eventID < rhs.eventID
     }
 
+    private static let backboneFamilyLanes: Set<DrumLane> = [.kick, .snare]
+    private static let accentLanes: Set<DrumLane> = [.crash, .ride]
+    private static let hihatFamilyLanes: Set<DrumLane> = [.hihatClosed, .hihatOpen]
+
     private static func shapeDetectedDrumEvents(_ events: [DetectedDrumEvent]) -> [DetectedDrumEvent] {
         guard !events.isEmpty else { return [] }
 
@@ -397,12 +406,21 @@ enum ChartGenerator {
         return groupedByBeat.keys.sorted().flatMap { beatIndex -> [DetectedDrumEvent] in
             guard let beatEvents = groupedByBeat[beatIndex] else { return [] }
 
-            let kicksAndSnares = beatEvents
-                .filter { $0.lane == .kick || $0.lane == .snare || $0.lane == .crash }
+            let backboneEvents = beatEvents
+                .filter { backboneFamilyLanes.contains($0.lane) }
+                .sorted { lhs, rhs in
+                    let lhsPriority = backbonePriority(lhs, beatIndex: beatIndex)
+                    let rhsPriority = backbonePriority(rhs, beatIndex: beatIndex)
+                    if lhsPriority != rhsPriority { return lhsPriority < rhsPriority }
+                    return eventPreferenceSort(lhs, rhs)
+                }
+
+            let accentEvents = beatEvents
+                .filter { accentLanes.contains($0.lane) }
                 .sorted(by: eventPreferenceSort)
 
             let hihats = beatEvents
-                .filter { $0.lane == .hihatClosed }
+                .filter { hihatFamilyLanes.contains($0.lane) }
                 .sorted { lhs, rhs in
                     let lhsPriority = hihatSubdivisionPriority(lhs.onsetSubdivisionIndex, beatIndex: beatIndex)
                     let rhsPriority = hihatSubdivisionPriority(rhs.onsetSubdivisionIndex, beatIndex: beatIndex)
@@ -410,17 +428,15 @@ enum ChartGenerator {
                     return eventPreferenceSort(lhs, rhs)
                 }
 
-            var seenHiHatSubdivisions = Set<Int>()
-            let uniqueHihats = hihats.filter { event in
-                guard let subdivision = event.onsetSubdivisionIndex else { return false }
-                return seenHiHatSubdivisions.insert(subdivision).inserted
-            }
+            let supportingLanes = beatEvents
+                .filter { !backboneFamilyLanes.contains($0.lane) && !accentLanes.contains($0.lane) && !hihatFamilyLanes.contains($0.lane) }
+                .sorted(by: eventPreferenceSort)
 
-            let pulseHihats = Array(uniqueHihats.prefix(maxClosedHihatPulsePerBeat))
-            let textureHihat = preferredTextureHiHat(from: uniqueHihats.dropFirst(maxClosedHihatPulsePerBeat), beatIndex: beatIndex)
-            let keptHihats = pulseHihats + (textureHihat.map { [$0] } ?? [])
+            let selectedBackbone = backboneEvents.first
+            let selectedAccent = preferredAccent(from: accentEvents, beatIndex: beatIndex, backbone: selectedBackbone)
+            let keptHihats = selectHiHats(from: hihats, beatIndex: beatIndex, backbone: selectedBackbone, accent: selectedAccent)
 
-            return (kicksAndSnares + keptHihats).sorted(by: eventPreferenceSort)
+            return ([selectedBackbone, selectedAccent].compactMap { $0 } + keptHihats + supportingLanes).sorted(by: eventPreferenceSort)
         }
     }
 
@@ -434,23 +450,71 @@ enum ChartGenerator {
         }
     }
 
-    private static func preferredTextureHiHat<S: Sequence>(from candidates: S, beatIndex: Int) -> DetectedDrumEvent? where S.Element == DetectedDrumEvent {
-        guard prefersTextureOnBeat(beatIndex) else { return nil }
+    private static func backbonePriority(_ event: DetectedDrumEvent, beatIndex: Int) -> Int {
+        let beatInBar = (((beatIndex % 4) + 4) % 4) + 1
+        switch event.lane {
+        case .snare:
+            return (beatInBar == 2 || beatInBar == 4) ? 0 : 2
+        case .kick:
+            return (beatInBar == 1 || beatInBar == 3) ? 0 : 1
+        default:
+            return 3
+        }
+    }
 
-        let textureCandidates = candidates.filter { event in
+    private static func preferredAccent(from accents: [DetectedDrumEvent], beatIndex: Int, backbone: DetectedDrumEvent?) -> DetectedDrumEvent? {
+        guard !accents.isEmpty else { return nil }
+        if backbone?.lane == .snare {
+            return nil
+        }
+        if beatIndex >= 0 && (beatIndex % 4) == 0 {
+            return accents.first
+        }
+        return backbone == nil ? accents.first : nil
+    }
+
+    private static func selectHiHats(
+        from hats: [DetectedDrumEvent],
+        beatIndex: Int,
+        backbone: DetectedDrumEvent?,
+        accent: DetectedDrumEvent?
+    ) -> [DetectedDrumEvent] {
+        var seenHiHatSubdivisions = Set<Int>()
+        let uniqueHihats = hats.filter { event in
+            guard let subdivision = event.onsetSubdivisionIndex else { return false }
+            return seenHiHatSubdivisions.insert(subdivision).inserted
+        }
+
+        guard !uniqueHihats.isEmpty else { return [] }
+
+        let hasKickLikeAnchor = backbone?.lane == .kick || accent?.lane == .crash
+        let shouldKeepPulse = hasKickLikeAnchor || prefersSparseHatPulseWithoutAnchor(beatIndex)
+        var kept: [DetectedDrumEvent] = shouldKeepPulse ? Array(uniqueHihats.prefix(maxClosedHihatPulsePerBeat)) : []
+
+        guard hasKickLikeAnchor, prefersTextureOnBeat(beatIndex) else {
+            return kept
+        }
+
+        let textureCandidates = uniqueHihats.filter { event in
             guard let subdivisionIndex = event.onsetSubdivisionIndex else { return false }
+            guard !kept.contains(where: { $0.eventID == event.eventID }) else { return false }
             switch subdivisionIndex % max(fallbackSubdivisionsPerBeat, 1) {
             case 1, 3: return true
             default: return false
             }
         }
 
-        return textureCandidates.sorted(by: eventPreferenceSort).first
+        kept.append(contentsOf: textureCandidates.sorted(by: eventPreferenceSort).prefix(maxHiHatTexturePerBeat))
+        return Array(kept.prefix(maxClosedHihatPulsePerBeat + maxHiHatTexturePerBeat))
     }
 
     private static func prefersTextureOnBeat(_ beatIndex: Int) -> Bool {
         let beatInBar = ((beatIndex % 4) + 4) % 4
         return beatInBar == 0 || beatInBar == 2
+    }
+
+    private static func prefersSparseHatPulseWithoutAnchor(_ beatIndex: Int) -> Bool {
+        sparseHatPulseBeatsInBar.contains(((beatIndex % 4) + 4) % 4)
     }
 
     private static func eventPreferenceSort(_ lhs: DetectedDrumEvent, _ rhs: DetectedDrumEvent) -> Bool {

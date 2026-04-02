@@ -59,6 +59,7 @@ The normalized analysis artifact should resolve raw detector output into a chart
 - `summary`
 - `beatGrid`
 - `drumEvents`
+- `drumEventDiagnostics`
 - `warnings`
 - `note`
 
@@ -109,6 +110,8 @@ Design choice: keep both beat- and subdivision-level indexing. Beat-level indexi
 
 `drumEvents` captures detector output mapped into MasterOfDrums gameplay lanes.
 
+The current generator intentionally shapes analyzer-heavy input before persistence: it keeps a single kick/snare backbone choice per beat, allows downbeat crash accents, and thins hi-hat stacks into pulse/texture so `normalized_analysis` does not preserve unreadable kick+snare+hat overstacking verbatim.
+
 Each event contains:
 
 - `eventID`
@@ -119,6 +122,21 @@ Each event contains:
 - `velocity`
 - `sourceLabel` — original detector class if different from lane name
 - `confidence`
+
+### `drumEventDiagnostics`
+
+`drumEventDiagnostics` summarizes how much analyzer output survived normalization shaping:
+
+- `rawCandidateCount`
+- `mappedCandidateCount`
+- `postShapingEventCount`
+- `usedFallback`
+- `droppedMissingOnsetCount`
+- `droppedUnknownLaneCount`
+- `deduplicatedCandidateCount`
+- `shapingReductionCount`
+
+This is mainly for auditability: when chart density gets trimmed, downstream review can tell whether the reduction came from missing analyzer data, duplicate collapse, or deliberate beat-level shaping.
 
 ### Lane set
 
@@ -244,7 +262,9 @@ This proposal is backed by:
 The runtime now produces `normalized_analysis` and `base_chart` artifacts during `chart_generate`.
 For the current slice, it prefers richer analyzer output when present (beat arrays, optional subdivision/tatum anchors, and drum-event candidates inside `rawAnalyzerOutput`) and otherwise falls back to a deterministic tempo-derived beat grid so downstream validation/export can start against stable artifacts now.
 
-Analyzer-driven drum-event shaping is intentionally conservative for prototype charts: kick/snare/crash structure is preserved, duplicate lane/slot hits are collapsed, and closed hi-hats are reduced to a single pulse hit per beat with only selective extra 1/16 texture on alternating beats. That keeps beat-tracker-derived charts from turning into constant hi-hat walls while still leaving some rhythmic motion in the scaffold.
+Analyzer-driven drum-event shaping is intentionally conservative for prototype charts: kick/snare/crash structure is preserved, duplicate lane/slot hits are collapsed, and closed hi-hats are only retained when they help outline the groove. In practice that means kick/crash-anchored beats can keep a single pulse plus selective extra 1/16 texture on alternating beats, snare-only backbeats drop their accompanying closed-hat spam, and hat-only sections fall back to sparse downbeat pulses. That keeps beat-tracker-derived charts from turning into constant hi-hat walls while still leaving some rhythmic motion in the scaffold.
+
+To make that reduction auditable, both `normalized_analysis` and `base_chart` now carry a `drumEventDiagnostics` object with `rawCandidateCount`, `mappedCandidateCount`, and `postShapingEventCount` plus drop/dedup details. The generator also emits a warning shaped like `Analyzer drum-event shaping counts: raw=12 mapped=9 post-shaping=5.` so logs immediately show whether reduction happened during lane mapping or later shaping.
 
 ## Recommended next implementation step
 
