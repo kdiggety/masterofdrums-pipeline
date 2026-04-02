@@ -163,23 +163,30 @@ The repo is now aimed at a first testable CLI + SQLite slice:
 Example flow:
 
 ```bash
-export PIPELINE_AUDIO_ANALYZER_COMMAND="python3 ./scripts/analyzer-wrapper.py --input {input} --output {output}"
+python3 -m venv .venv
+source .venv/bin/activate
+
+export PIPELINE_AUDIO_ANALYZER_COMMAND="./.venv/bin/python ./scripts/analyzer-wrapper.py --input {input} --output {output}"
 
 # legacy single-backend mode
-# export PIPELINE_ANALYZER_BACKEND_COMMAND="python3 ./scripts/backend-analyzer.py --input {input} --output {output}"
+# export PIPELINE_ANALYZER_BACKEND_COMMAND="./.venv/bin/python ./scripts/backend-analyzer.py --input {input} --output {output}"
 
 # preferred rollout mode: new real backend + safety fallback
-export PIPELINE_ANALYZER_PRIMARY_BACKEND_COMMAND="python3 ./scripts/beat-this-backend.py --input {input} --output {output}"
-export PIPELINE_ANALYZER_FALLBACK_BACKEND_COMMAND="python3 ./scripts/backend-analyzer.py --input {input} --output {output}"
+export PIPELINE_ANALYZER_PRIMARY_BACKEND_COMMAND="./.venv/bin/python ./scripts/beat-this-backend.py --input {input} --output {output}"
+export PIPELINE_ANALYZER_FALLBACK_BACKEND_COMMAND="./.venv/bin/python ./scripts/backend-analyzer.py --input {input} --output {output}"
 export PIPELINE_ANALYZER_FALLBACK_POLICY=on-error-or-invalid
 export PIPELINE_ANALYZER_VALIDATION_MODE=require-timing
 
 # optional madmom-style fallback spike instead of the heuristic backend
-# export PIPELINE_ANALYZER_FALLBACK_BACKEND_COMMAND="python3 ./scripts/madmom-fallback-backend.py --input {input} --output {output} --beats-file ./scripts/fixtures/madmom-sample.beats.txt --downbeats-file ./scripts/fixtures/madmom-sample.beats.txt"
+# export PIPELINE_ANALYZER_FALLBACK_BACKEND_COMMAND="./.venv/bin/python ./scripts/madmom-fallback-backend.py --input {input} --output {output} --beats-file ./scripts/fixtures/madmom-sample.beats.txt --downbeats-file ./scripts/fixtures/madmom-sample.beats.txt"
 
 export PIPELINE_AUDIO_ANALYZER_TIMEOUT_SECONDS=300
+export PIPELINE_AUDIO_ANALYZER_STDOUT_JSON=false
 
+# quick validation loop before touching the job queue
 swift run MasterOfDrumsPipeline validate-audio-analyzer --source-uri file:///tmp/test.wav --source-type file --requested-by cli
+python3 ./scripts/test-analyzer-wrapper.py
+
 swift run MasterOfDrumsPipeline init-db
 swift run MasterOfDrumsPipeline enqueue-audio-ingest --source-uri file:///tmp/test.wav --source-type file --requested-by cli
 swift run MasterOfDrumsPipeline worker --stop-after-idle-polls 2
@@ -187,6 +194,8 @@ swift run MasterOfDrumsPipeline list-jobs
 swift run MasterOfDrumsPipeline list-events --limit 20
 swift run MasterOfDrumsPipeline list-artifacts --limit 20
 ```
+
+If the repo moves, update the `.env` file or re-export the commands so they point at the venv that lives inside the current checkout. The analyzer command examples above intentionally pin the interpreter to `./.venv/bin/python` instead of relying on whichever `python3` happens to be first on `PATH`.
 
 ## Setup Script
 
@@ -205,29 +214,52 @@ Minimal Python-side bootstrap for the real primary path:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install --upgrade pip
+python3 -m pip install --upgrade pip
 # install a PyTorch build that matches your platform from https://pytorch.org/get-started/locally/
-pip install tqdm einops soxr rotary-embedding-torch
-pip install https://github.com/CPJKU/beat_this/archive/main.zip
+python3 -m pip install tqdm einops soxr rotary-embedding-torch
+python3 -m pip install https://github.com/CPJKU/beat_this/archive/main.zip
 # ffmpeg is recommended for non-WAV input decoding
 ```
 
 Verify the install before running the pipeline:
 
 ```bash
-python3 -c 'import importlib.util, shutil; print("beat_this_py:", bool(importlib.util.find_spec("beat_this"))); print("beat_this_cli:", shutil.which("beat_this"))'
+./.venv/bin/python -c 'import importlib.util, shutil; print("beat_this_py:", bool(importlib.util.find_spec("beat_this"))); print("beat_this_cli:", shutil.which("beat_this"))'
 ```
 
 Expected result: `beat_this_py: True` or a non-empty `beat_this_cli:` path. If both are missing, the wrapper will fall back to the heuristic backend instead of using `beat_this`.
 
-Then set:
+Then set the analyzer env vars in your shell or `.env` file:
 
 ```bash
-export PIPELINE_AUDIO_ANALYZER_COMMAND="python3 ./scripts/analyzer-wrapper.py --input {input} --output {output}"
-export PIPELINE_ANALYZER_BACKEND_COMMAND="python3 ./scripts/beat-this-backend.py --input {input} --output {output}"
-# optional, explicit fallback override
-export PIPELINE_ANALYZER_FALLBACK_BACKEND_COMMAND="python3 ./scripts/backend-analyzer.py --input {input} --output {output}"
+export PIPELINE_AUDIO_ANALYZER_COMMAND="./.venv/bin/python ./scripts/analyzer-wrapper.py --input {input} --output {output}"
+
+# legacy single-backend mode
+# export PIPELINE_ANALYZER_BACKEND_COMMAND="./.venv/bin/python ./scripts/beat-this-backend.py --input {input} --output {output}"
+
+# preferred current setup
+export PIPELINE_ANALYZER_PRIMARY_BACKEND_COMMAND="./.venv/bin/python ./scripts/beat-this-backend.py --input {input} --output {output}"
+export PIPELINE_ANALYZER_FALLBACK_BACKEND_COMMAND="./.venv/bin/python ./scripts/backend-analyzer.py --input {input} --output {output}"
+export PIPELINE_ANALYZER_FALLBACK_POLICY=on-error-or-invalid
+export PIPELINE_ANALYZER_VALIDATION_MODE=require-timing
+export PIPELINE_AUDIO_ANALYZER_TIMEOUT_SECONDS=300
+export PIPELINE_AUDIO_ANALYZER_STDOUT_JSON=false
 ```
+
+Recommended validation workflow after setting those vars:
+
+```bash
+./.venv/bin/python -c 'import importlib.util, shutil; print("beat_this_py:", bool(importlib.util.find_spec("beat_this"))); print("beat_this_cli:", shutil.which("beat_this"))'
+swift run MasterOfDrumsPipeline validate-audio-analyzer --source-uri file:///tmp/test.wav --source-type file --requested-by cli --output-path /tmp/audio-analysis.json
+python3 ./scripts/test-analyzer-wrapper.py
+```
+
+That sequence catches the current failure modes quickly:
+
+1. missing `beat_this` / Python deps inside the repo venv
+2. stale analyzer command strings after moving the repo to a new path
+3. wrapper/backend payloads that fail `require-timing` validation
+4. obvious contract-shape regressions before running the full worker loop
 
 Example usage:
 

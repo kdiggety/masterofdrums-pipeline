@@ -26,23 +26,29 @@ The command is a shell template and must include:
 Example:
 
 ```bash
-PIPELINE_AUDIO_ANALYZER_COMMAND="python3 ./scripts/analyzer-wrapper.py --input {input} --output {output}"
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install --upgrade pip
+
+PIPELINE_AUDIO_ANALYZER_COMMAND="./.venv/bin/python ./scripts/analyzer-wrapper.py --input {input} --output {output}"
 
 # simplest legacy mode: one backend behind the stable wrapper entry point
-PIPELINE_ANALYZER_BACKEND_COMMAND="python3 ./scripts/backend-analyzer.py --input {input} --output {output}"
+# PIPELINE_ANALYZER_BACKEND_COMMAND="./.venv/bin/python ./scripts/backend-analyzer.py --input {input} --output {output}"
 
-# preferred rollout mode for a new real backend:
-# PIPELINE_ANALYZER_PRIMARY_BACKEND_COMMAND="python3 ./scripts/beat-this-backend.py --input {input} --output {output}"
-# PIPELINE_ANALYZER_FALLBACK_BACKEND_COMMAND="python3 ./scripts/backend-analyzer.py --input {input} --output {output}"
-# PIPELINE_ANALYZER_FALLBACK_POLICY=on-error-or-invalid
-# PIPELINE_ANALYZER_VALIDATION_MODE=require-timing
+# preferred rollout mode for the current real backend:
+PIPELINE_ANALYZER_PRIMARY_BACKEND_COMMAND="./.venv/bin/python ./scripts/beat-this-backend.py --input {input} --output {output}"
+PIPELINE_ANALYZER_FALLBACK_BACKEND_COMMAND="./.venv/bin/python ./scripts/backend-analyzer.py --input {input} --output {output}"
+PIPELINE_ANALYZER_FALLBACK_POLICY=on-error-or-invalid
+PIPELINE_ANALYZER_VALIDATION_MODE=require-timing
 
 # optional alternate fallback spike:
-# PIPELINE_ANALYZER_FALLBACK_BACKEND_COMMAND="python3 ./scripts/madmom-fallback-backend.py --input {input} --output {output} --beats-file ./scripts/fixtures/madmom-sample.beats.txt --downbeats-file ./scripts/fixtures/madmom-sample.beats.txt"
+# PIPELINE_ANALYZER_FALLBACK_BACKEND_COMMAND="./.venv/bin/python ./scripts/madmom-fallback-backend.py --input {input} --output {output} --beats-file ./scripts/fixtures/madmom-sample.beats.txt --downbeats-file ./scripts/fixtures/madmom-sample.beats.txt"
 
 PIPELINE_AUDIO_ANALYZER_TIMEOUT_SECONDS=300
 PIPELINE_AUDIO_ANALYZER_STDOUT_JSON=false
 ```
+
+The repo-local venv path is intentional here. It keeps analyzer execution pinned to the Python environment that actually has `beat_this` and related deps installed, which avoids the path drift that happens after moving the checkout to a new machine or directory.
 
 The worker will:
 
@@ -104,6 +110,21 @@ The runtime injects these environment variables into the analyzer process:
 - `PIPELINE_ANALYZER_CONTRACT_SCHEMA_URI`
 - `PIPELINE_ANALYZER_CONTRACT_SCHEMA_VERSION`
 
+The current wrapper/backend setup also commonly relies on these inherited operator-facing env vars:
+
+- `PIPELINE_AUDIO_ANALYZER_COMMAND`
+- `PIPELINE_AUDIO_ANALYZER_TIMEOUT_SECONDS`
+- `PIPELINE_AUDIO_ANALYZER_STDOUT_JSON`
+- `PIPELINE_ANALYZER_BACKEND_COMMAND` (legacy single-backend mode)
+- `PIPELINE_ANALYZER_PRIMARY_BACKEND_COMMAND`
+- `PIPELINE_ANALYZER_FALLBACK_BACKEND_COMMAND`
+- `PIPELINE_ANALYZER_FALLBACK_POLICY`
+- `PIPELINE_ANALYZER_VALIDATION_MODE`
+- `PIPELINE_BEAT_THIS_MODEL`
+- `PIPELINE_BEAT_THIS_DEVICE`
+- `PIPELINE_BEAT_THIS_DBN`
+- `PIPELINE_BEAT_THIS_FLOAT16`
+
 Preferred: emit the full pipeline contract directly.
 
 The repo now ships `scripts/beat-this-backend.py` as the intended primary backend. It tries the `beat_this` Python API first, then the `beat_this` CLI if available, and finally falls back to `scripts/backend-analyzer.py` unless fallback is disabled. That keeps the wrapper/backend seam stable while making the default path genuinely model-backed when dependencies are installed.
@@ -157,10 +178,19 @@ The wrapper records the selected backend, fallback policy, validation mode, and 
 Before enqueueing full workflows, operators can now run:
 
 ```bash
-swift run MasterOfDrumsPipeline validate-audio-analyzer --source-uri file:///tmp/test.wav --output-path /tmp/audio-analysis.json
+./.venv/bin/python -c 'import importlib.util, shutil; print("beat_this_py:", bool(importlib.util.find_spec("beat_this"))); print("beat_this_cli:", shutil.which("beat_this"))'
+swift run MasterOfDrumsPipeline validate-audio-analyzer --source-uri file:///tmp/test.wav --source-type file --requested-by cli --output-path /tmp/audio-analysis.json
+python3 ./scripts/test-analyzer-wrapper.py
 ```
 
-That command runs the configured analyzer directly, normalizes loose backend output into the persisted contract, writes the resulting artifact, and prints the normalized JSON. It is meant as the quickest way to verify a real backend command/template before involving SQLite job orchestration.
+Recommended order:
+
+1. verify the repo-local venv can actually import `beat_this` (or at least expose the CLI)
+2. run `validate-audio-analyzer` against a real file path to confirm the configured command template, env vars, and normalization flow
+3. run the repo-local wrapper smoke test to catch obvious wrapper/backend contract regressions
+4. only then enqueue workflows or run the worker loop
+
+That sequence is meant as the quickest way to verify the current real backend command/template before involving SQLite job orchestration.
 
 ## Known risks
 
