@@ -140,6 +140,7 @@ Still to implement:
 
 - concrete chart-generation analyzer wrappers behind the configured analyzer command
 - richer analyzer outputs that include beat/downbeat arrays and lane-level drum-event candidates
+- analyzer-driven chart shaping now applies beat-aware density controls so prototype charts keep one kick/snare backbone lane per beat, allow downbeat crash accents, and thin overlapping hi-hat stacks into pulse/texture instead of unreadable kick+snare+hat piles
 - downstream chart validation/export built on the normalized chart-generation artifacts
 - broader fixture/integration coverage beyond the single known WAV path (the corpus/reporting shape now includes real-clip review metadata, linting, and regression summaries, but only one actual WAV fixture is checked in)
 - a dedicated CLI surface for corpus evaluation/report export; the quality loop exists in tests/domain code with manifest linting and review-friendly text output, but is not yet an operator-facing command

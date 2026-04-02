@@ -43,7 +43,7 @@ enum ChartGenerator {
             ),
             beatGrid: beatGrid,
             drumEvents: drumEventResult.events,
-            drumEventDiagnostics: drumEventResult.diagnostics,
+            drumEventDiagnostics: drumEventResult.diagnostics.counts,
             warnings: warnings,
             note: usedAnalyzerEvents
                 ? "Normalized analysis generated from analyzer timing/event output with \(detectedSubdivisionCount)x subdivision anchors per beat."
@@ -68,7 +68,7 @@ enum ChartGenerator {
                 measures: measures,
                 notes: notes
             ),
-            drumEventDiagnostics: drumEventResult.diagnostics,
+            drumEventDiagnostics: drumEventResult.diagnostics.counts,
             warnings: warnings,
             note: usedAnalyzerEvents
                 ? "Base chart generated from analyzer timing and mapped drum-event candidates using \(detectedSubdivisionCount)x quantization."
@@ -314,20 +314,18 @@ enum ChartGenerator {
         if !reduced.events.isEmpty {
             return DrumEventResult(
                 events: reduced.events,
-                diagnostics: DrumEventDiagnosticsResult(
-                    counts: DrumEventDiagnostics(
-                        rawCandidateCount: candidates.count,
-                        mappedCandidateCount: mapped.count,
-                        postShapingEventCount: reduced.events.count,
-                        usedFallback: false,
-                        droppedMissingOnsetCount: droppedMissingOnset,
-                        droppedUnknownLaneCount: droppedUnknownLane,
-                        deduplicatedCandidateCount: reduced.deduplicatedCandidates,
-                        shapingReductionCount: max(mapped.count - reduced.events.count, 0)
-                    ),
-                    maxQuantizationErrorSeconds: observedQuantization ? maxQuantizationError : nil,
-                    laneMappingsUsed: mappedLanes
-                )
+                diagnostics: DrumEventDiagnostics(
+                    rawCandidateCount: candidates.count,
+                    mappedCandidateCount: mapped.count,
+                    postShapingEventCount: reduced.events.count,
+                    usedFallback: false,
+                    droppedMissingOnsetCount: droppedMissingOnset,
+                    droppedUnknownLaneCount: droppedUnknownLane,
+                    deduplicatedCandidateCount: reduced.deduplicatedCandidates,
+                    shapingReductionCount: max(mapped.count - reduced.events.count, 0)
+                ),
+                maxQuantizationErrorSeconds: observedQuantization ? maxQuantizationError : nil,
+                laneMappingsUsed: mappedLanes
             )
         }
 
