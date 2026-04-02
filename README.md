@@ -144,6 +144,12 @@ Still to implement:
 - broader fixture/integration coverage beyond the single known WAV path (the corpus/reporting shape now includes real-clip review metadata, linting, and regression summaries, but only one actual WAV fixture is checked in)
 - a dedicated CLI surface for corpus evaluation/report export; the quality loop exists in tests/domain code with manifest linting and review-friendly text output, but is not yet an operator-facing command
 
+Recent spike work for tasks 5/6:
+
+- `scripts/madmom-fallback-backend.py` makes the fallback path concrete enough to validate madmom-style beat/downbeat outputs without committing to a fragile production install yet
+- `scripts/adtof-output-adapter.py` and MIDI-aware lane normalization show the current runtime can already consume ADTOF-like drum-event outputs as a stage-2 event source
+- sample fixtures for both spikes live under `scripts/fixtures/`
+
 ## Current Testable Slice
 
 The repo is now aimed at a first testable CLI + SQLite slice:
@@ -195,4 +201,4 @@ Treat that as a transitional deployment shape until the pipeline moves to a netw
 
 Note: this assumes Swift and SQLite development libraries are available on the machine.
 
-See `Docs/architecture/standalone-pipeline-plan.md`, `Docs/database/sqlite-schema.md`, `Docs/interfaces/cli-interface-outline.md`, `Docs/interfaces/audio-analysis-contract.md`, `Docs/interfaces/chart-generation-analyzer-stack.md`, `Docs/interfaces/chart-generation-contract.md`, and `Docs/quality/chart-quality-evaluation.md` for the current corpus/reporting scaffolding and the gap to a real CLI-driven evaluation loop.
+See `Docs/architecture/standalone-pipeline-plan.md`, `Docs/database/sqlite-schema.md`, `Docs/interfaces/cli-interface-outline.md`, `Docs/interfaces/audio-analysis-contract.md`, `Docs/interfaces/chart-generation-analyzer-stack.md`, `Docs/interfaces/chart-generation-contract.md`, `Docs/interfaces/madmom-fallback-spike.md`, `Docs/research/adtof-feasibility.md`, and `Docs/quality/chart-quality-evaluation.md` for the current corpus/reporting scaffolding and the gap to a real CLI-driven evaluation loop.

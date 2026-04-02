@@ -1,0 +1,8 @@
+{
+  "hits": [
+    {"time": 0.00, "pitch": 35, "velocity": 120, "confidence": 0.95},
+    {"time": 0.50, "pitch": 38, "velocity": 100, "confidence": 0.88},
+    {"time": 0.75, "pitch": 42, "velocity": 80, "confidence": 0.72},
+    {"time": 1.00, "pitch": 49, "velocity": 110, "confidence": 0.81}
+  ]
+}
