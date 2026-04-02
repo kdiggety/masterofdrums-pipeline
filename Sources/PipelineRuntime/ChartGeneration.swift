@@ -269,7 +269,7 @@ enum ChartGenerator {
         var mappedLanes = Set<DrumLane>()
 
         let mapped = candidates.enumerated().compactMap { index, candidate -> DetectedDrumEvent? in
-            guard let onsetSeconds = rawDouble(
+            guard let onsetSeconds = timingValue(
                 candidate["onsetSeconds"]
                     ?? candidate["onset_seconds"]
                     ?? candidate["time"]
@@ -278,20 +278,14 @@ enum ChartGenerator {
                     ?? candidate["time_seconds"]
                     ?? candidate["startSeconds"]
                     ?? candidate["start_seconds"]
+                    ?? candidate["position"]
+                    ?? candidate["offset"]
+                    ?? candidate["onset"]
             ) else {
                 droppedMissingOnset += 1
                 return nil
             }
-            guard let lane = mapLane(
-                candidate["lane"]
-                    ?? candidate["label"]
-                    ?? candidate["sourceLabel"]
-                    ?? candidate["source_label"]
-                    ?? candidate["instrument"]
-                    ?? candidate["class"]
-                    ?? candidate["type"]
-                    ?? candidate["name"]
-            ) else {
+            guard let lane = mapLane(eventLaneValue(from: candidate)) else {
                 droppedUnknownLane += 1
                 return nil
             }
@@ -308,7 +302,7 @@ enum ChartGenerator {
                 onsetSubdivisionIndex: anchor?.subdivisionIndex,
                 lane: lane,
                 velocity: clampedVelocity(from: candidate["velocity"] ?? candidate["strength"] ?? candidate["amplitude"]),
-                sourceLabel: rawString(candidate["sourceLabel"] ?? candidate["source_label"] ?? candidate["label"] ?? candidate["instrument"] ?? candidate["class"] ?? candidate["type"]),
+                sourceLabel: rawString(eventLaneValue(from: candidate) ?? candidate["sourceLabel"] ?? candidate["source_label"]),
                 confidence: rawDouble(candidate["confidence"] ?? candidate["probability"] ?? candidate["score"])
             )
         }
@@ -628,18 +622,30 @@ enum ChartGenerator {
             let candidateArrays: [RawJSONValue?] = [
                 root["drumEvents"],
                 root["drum_events"],
+                root["drumEventCandidates"],
+                root["drum_event_candidates"],
                 root["events"],
                 root["hits"],
                 root["notes"],
+                root["candidates"],
                 root["drums"]?.dictionary?["events"],
                 root["drums"]?.dictionary?["hits"],
+                root["drums"]?.dictionary?["candidates"],
                 root["percussion"]?.dictionary?["events"],
                 root["percussion"]?.dictionary?["hits"],
+                root["percussion"]?.dictionary?["candidates"],
                 root["timing"]?.dictionary?["drumEvents"],
-                root["timing"]?.dictionary?["drum_events"]
+                root["timing"]?.dictionary?["drum_events"],
+                root["timing"]?.dictionary?["events"],
+                root["tracks"],
+                root["instruments"],
+                root["predictions"],
+                root["detections"],
+                root["transcription"]?.dictionary?["events"],
+                root["transcription"]?.dictionary?["hits"]
             ]
             for candidate in candidateArrays {
-                let values = candidate?.array?.compactMap { $0.dictionary } ?? []
+                let values = extractEventObjects(from: candidate)
                 if !values.isEmpty { return values }
             }
         }
@@ -664,16 +670,7 @@ enum ChartGenerator {
     private static func inferredSubdivisionsFromAnalyzerEvents(beatStarts: [Double], candidates: [[String: RawJSONValue]]) -> Int? {
         guard beatStarts.count >= 2 else { return nil }
         let onsets = candidates.compactMap { candidate in
-            rawDouble(
-                candidate["onsetSeconds"]
-                    ?? candidate["onset_seconds"]
-                    ?? candidate["time"]
-                    ?? candidate["timestamp"]
-                    ?? candidate["timeSeconds"]
-                    ?? candidate["time_seconds"]
-                    ?? candidate["startSeconds"]
-                    ?? candidate["start_seconds"]
-            )
+            timingValue(from: .object(candidate))
         }
         .filter { $0.isFinite && $0 >= beatStarts.first! && $0 <= beatStarts.last! + estimateFinalBeatDuration(from: beatStarts, tempoBPM: nil) }
 
@@ -734,25 +731,154 @@ enum ChartGenerator {
 
     private static func candidateRootObjects(from raw: RawJSONValue?) -> [[String: RawJSONValue]] {
         guard let root = raw?.dictionary else { return [] }
-        var objects: [[String: RawJSONValue]] = [root]
-        for key in ["result", "output", "payload", "data", "analysis"] {
-            if let nested = root[key]?.dictionary {
-                objects.append(nested)
+        let interestingKeys: Set<String> = [
+            "result", "output", "payload", "data", "analysis", "response", "prediction", "timing", "drums",
+            "percussion", "tracks", "track", "events", "drumEvents", "drum_events", "drumEventCandidates",
+            "drum_event_candidates", "candidates", "hits", "notes", "transcription", "detections"
+        ]
+
+        var ordered: [[String: RawJSONValue]] = []
+        var seen = Set<String>()
+
+        func append(_ object: [String: RawJSONValue]) {
+            let key = object.keys.sorted().joined(separator: "|")
+            guard seen.insert(key).inserted else { return }
+            ordered.append(object)
+        }
+
+        func visit(_ value: RawJSONValue, preferred: Bool) {
+            switch value {
+            case .object(let object):
+                if preferred {
+                    append(object)
+                }
+                for (key, nested) in object {
+                    visit(nested, preferred: preferred || interestingKeys.contains(key))
+                }
+            case .array(let array):
+                for nested in array {
+                    visit(nested, preferred: preferred)
+                }
+            default:
+                break
             }
         }
-        return objects
+
+        visit(.object(root), preferred: true)
+        return ordered
     }
 
     private static func extractTimingValues(from candidate: RawJSONValue?) -> [Double] {
-        if let values = candidate?.array?.compactMap({ rawDouble($0) }), !values.isEmpty {
+        if let values = candidate?.array?.compactMap({ timingValue(from: $0) }), !values.isEmpty {
             return values
         }
-        if let objects = candidate?.array?.compactMap({ $0.dictionary }), !objects.isEmpty {
-            return objects.compactMap {
-                rawDouble($0["startSeconds"] ?? $0["start_seconds"] ?? $0["time"] ?? $0["timestamp"] ?? $0["onsetSeconds"] ?? $0["onset_seconds"])
-            }
+        if let value = timingValue(from: candidate) {
+            return [value]
         }
         return []
+    }
+
+    private static func extractEventObjects(from candidate: RawJSONValue?) -> [[String: RawJSONValue]] {
+        guard let candidate else { return [] }
+
+        switch candidate {
+        case .array(let values):
+            return values.flatMap { extractEventObjects(from: $0) }
+        case .object(let dictionary):
+            if let nested = dictionary["event"]?.dictionary {
+                return [dictionary.merging(nested) { _, nested in nested }]
+            }
+            if let nested = dictionary["hit"]?.dictionary {
+                return [dictionary.merging(nested) { _, nested in nested }]
+            }
+            if let nested = dictionary["drum"]?.dictionary {
+                return [dictionary.merging(nested) { _, nested in nested }]
+            }
+            if eventLaneValue(from: dictionary) != nil || timingValue(from: .object(dictionary)) != nil {
+                return [dictionary]
+            }
+            let nestedKeys = ["items", "events", "hits", "notes", "candidates", "drumEvents", "drum_events", "tracks", "instruments", "predictions", "detections", "children"]
+            for key in nestedKeys {
+                let nested = extractEventObjects(from: dictionary[key])
+                if !nested.isEmpty { return nested }
+            }
+            for value in dictionary.values {
+                let nested = extractEventObjects(from: value)
+                if !nested.isEmpty { return nested }
+            }
+            return []
+        default:
+            return []
+        }
+    }
+
+    private static func timingValue(from value: RawJSONValue?) -> Double? {
+        guard let value else { return nil }
+        if let direct = rawDouble(value) {
+            return direct
+        }
+        guard let object = value.dictionary else { return nil }
+
+        if let direct = rawDouble(
+            object["startSeconds"]
+                ?? object["start_seconds"]
+                ?? object["time"]
+                ?? object["timestamp"]
+                ?? object["seconds"]
+                ?? object["offsetSeconds"]
+                ?? object["offset_seconds"]
+                ?? object["onsetSeconds"]
+                ?? object["onset_seconds"]
+        ) {
+            return direct
+        }
+
+        for nestedKey in ["time", "start", "position", "offset", "onset"] {
+            if let nested = object[nestedKey]?.dictionary,
+               let direct = rawDouble(
+                   nested["seconds"]
+                    ?? nested["timeSeconds"]
+                    ?? nested["time_seconds"]
+                    ?? nested["startSeconds"]
+                    ?? nested["start_seconds"]
+                    ?? nested["offsetSeconds"]
+                    ?? nested["offset_seconds"]
+                    ?? nested["value"]
+               ) {
+                return direct
+            }
+        }
+        return nil
+    }
+
+    private static func eventLaneValue(from candidate: [String: RawJSONValue]) -> RawJSONValue? {
+        if let direct = candidate["lane"]
+            ?? candidate["label"]
+            ?? candidate["sourceLabel"]
+            ?? candidate["source_label"]
+            ?? candidate["instrument"]
+            ?? candidate["class"]
+            ?? candidate["type"]
+            ?? candidate["name"] {
+            return flattenLabelValue(direct)
+        }
+
+        for nestedKey in ["instrument", "class", "lane", "source", "drum"] {
+            if let nested = candidate[nestedKey]?.dictionary {
+                if let label = nested["label"] ?? nested["name"] ?? nested["id"] ?? nested["family"] ?? nested["instrument"] {
+                    return flattenLabelValue(label)
+                }
+            }
+        }
+        return nil
+    }
+
+    private static func flattenLabelValue(_ value: RawJSONValue) -> RawJSONValue? {
+        if rawString(value) != nil {
+            return value
+        }
+        guard let object = value.dictionary else { return nil }
+        return object["label"] ?? object["name"] ?? object["id"] ?? object["family"] ?? object["instrument"]
     }
 
     private static func normalizeStarts(_ values: [Double]) -> [Double] {
@@ -793,14 +919,14 @@ enum ChartGenerator {
     private static func mapLane(_ rawValue: RawJSONValue?) -> DrumLane? {
         guard let raw = normalizedLaneLabel(rawValue) else { return nil }
         switch raw {
-        case "kick", "bd", "bass_drum", "bassdrum", "bass_drum_1", "bass_drum_2", "bassdrum_1", "bassdrum_2", "kik": return .kick
-        case "snare", "sd", "sn", "rimshot", "cross_stick", "side_stick": return .snare
-        case "hihat_closed", "closed_hihat", "closed_hat", "closed_hi_hat", "hhc", "hat_closed", "hi_hat_closed", "chh": return .hihatClosed
+        case "kick", "bd", "bass_drum", "bassdrum", "bass_drum_1", "bass_drum_2", "bassdrum_1", "bassdrum_2", "kik", "kick_drum": return .kick
+        case "snare", "sd", "sn", "rimshot", "rim", "cross_stick", "side_stick", "sidestick": return .snare
+        case "hihat_closed", "closed_hihat", "closed_hat", "closed_hi_hat", "hhc", "hat_closed", "hi_hat_closed", "chh", "hh", "hihat": return .hihatClosed
         case "hihat_open", "open_hihat", "open_hat", "open_hi_hat", "hho", "hat_open", "hi_hat_open", "ohh": return .hihatOpen
-        case "tom_low", "low_tom", "floor_tom", "floortom": return .tomLow
-        case "tom_mid", "mid_tom", "middle_tom", "mid_tom_1", "tom_medium": return .tomMid
-        case "tom_high", "high_tom", "rack_tom", "racktom": return .tomHigh
-        case "crash", "crash_cymbal", "crash_left", "crash_right", "crash_1", "crash_2": return .crash
+        case "tom_low", "low_tom", "floor_tom", "floortom", "tom_3": return .tomLow
+        case "tom_mid", "mid_tom", "middle_tom", "mid_tom_1", "tom_medium", "tom_2": return .tomMid
+        case "tom_high", "high_tom", "rack_tom", "racktom", "tom_1": return .tomHigh
+        case "crash", "crash_cymbal", "crash_left", "crash_right", "crash_1", "crash_2", "china": return .crash
         case "ride", "ride_cymbal", "ride_bell", "ride_1", "ride_2": return .ride
         case "clap", "handclap", "hand_clap": return .clap
         case "percussion", "perc", "cowbell", "shaker", "tambourine": return .percussion
@@ -810,10 +936,13 @@ enum ChartGenerator {
 
     private static func normalizedLaneLabel(_ rawValue: RawJSONValue?) -> String? {
         guard let raw = rawString(rawValue)?.lowercased() else { return nil }
-        let collapsed = raw
-            .replacingOccurrences(of: "-", with: "_")
-            .replacingOccurrences(of: " ", with: "_")
-        return collapsed
+        let replaced = raw.unicodeScalars.map { scalar -> Character in
+            CharacterSet.alphanumerics.contains(scalar) ? Character(String(scalar)) : "_"
+        }
+        let collapsed = String(replaced)
+            .replacingOccurrences(of: "__", with: "_")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "_"))
+        return collapsed.isEmpty ? nil : collapsed
     }
 
     private static func rawString(_ value: RawJSONValue?) -> String? {

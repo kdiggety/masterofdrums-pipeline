@@ -119,6 +119,78 @@ final class ChartGenerationTests: XCTestCase {
         XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("Collapsed 1 analyzer drum-event duplicates") }))
     }
 
+
+    func testGenerateConsumesNestedTimingObjectsAndStructuredEventLabels() throws {
+        let analysis = makeAnalysis(raw: [
+            "result": [
+                "timing": [
+                    "beats": [
+                        ["time": ["seconds": 0.0]],
+                        ["position": ["seconds": 0.5]],
+                        ["start": ["seconds": 1.0]]
+                    ],
+                    "subdivisions": [
+                        ["start": ["seconds": 0.0]],
+                        ["start": ["seconds": 0.25]],
+                        ["start": ["seconds": 0.5]],
+                        ["start": ["seconds": 0.75]],
+                        ["start": ["seconds": 1.0]],
+                        ["start": ["seconds": 1.25]]
+                    ],
+                    "downbeats": [["offset": ["seconds": 0.0]]]
+                ],
+                "drumEventCandidates": [
+                    ["id": "kick-1", "position": ["seconds": 0.24], "instrument": ["label": "bass drum"], "velocity": 0.9],
+                    ["id": "snare-1", "offset": ["seconds": 0.76], "class": ["name": "snare"], "strength": 0.8],
+                    ["id": "hat-1", "onset": ["seconds": 1.24], "lane": ["name": "closed hat"], "amplitude": 0.5]
+                ]
+            ]
+        ], duration: 1.5)
+
+        let generated = ChartGenerator.generate(
+            from: analysis,
+            generatedAt: Date(timeIntervalSince1970: 0),
+            normalizedAnalysisArtifactURI: "file:///tmp/normalized.json"
+        )
+
+        XCTAssertEqual(generated.normalized.summary.beatCount, 3)
+        XCTAssertEqual(generated.normalized.beatGrid.count, 6)
+        XCTAssertEqual(generated.normalized.drumEvents.map(\.lane), [.kick, .snare, .hihatClosed])
+        XCTAssertEqual(generated.baseChart.chart.notes.map(\.tick), [240, 720, 1200])
+        XCTAssertEqual(generated.baseChart.chart.notes.map(\.subdivisionIndex), [1, 3, 5])
+    }
+
+    func testGenerateConsumesTrackWrappedEventArrays() throws {
+        let analysis = makeAnalysis(raw: [
+            "payload": [
+                "timing": [
+                    "beat_times": [0.0, 0.5, 1.0],
+                    "subdivisions_per_beat": 4
+                ],
+                "tracks": [
+                    [
+                        "name": "drums",
+                        "events": [
+                            ["id": "kick-1", "time": ["seconds": 0.01], "instrument": ["name": "kick"]],
+                            ["id": "snare-1", "time": ["seconds": 0.49], "instrument": ["name": "snare"]]
+                        ]
+                    ]
+                ]
+            ]
+        ], duration: 1.0)
+
+        let generated = ChartGenerator.generate(
+            from: analysis,
+            generatedAt: Date(timeIntervalSince1970: 0),
+            normalizedAnalysisArtifactURI: "file:///tmp/normalized.json"
+        )
+
+        XCTAssertEqual(generated.normalized.drumEvents.count, 2)
+        XCTAssertEqual(generated.normalized.drumEvents.map(\.lane), [.kick, .snare])
+        XCTAssertEqual(generated.baseChart.chart.notes.map(\.tick), [0, 480])
+        XCTAssertTrue(generated.normalized.note?.contains("4x") == true)
+    }
+
     func testGenerateFallsBackToDeterministicQuarterNoteGridWithoutAnalyzerEvents() throws {
         let analysis = makeAnalysis(raw: [:], tempo: nil, duration: 1.0)
 
