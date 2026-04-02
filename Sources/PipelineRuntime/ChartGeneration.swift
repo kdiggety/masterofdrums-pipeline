@@ -399,7 +399,7 @@ enum ChartGenerator {
 
             let kicksAndSnares = beatEvents
                 .filter { $0.lane == .kick || $0.lane == .snare || $0.lane == .crash }
-                .sorted(eventPreferenceSort)
+                .sorted(by: eventPreferenceSort)
 
             let hihats = beatEvents
                 .filter { $0.lane == .hihatClosed }
@@ -417,7 +417,7 @@ enum ChartGenerator {
             }
             .prefix(maxClosedHihatPerBeat)
 
-            return (kicksAndSnares + keptHihats).sorted(eventPreferenceSort)
+            return (kicksAndSnares + keptHihats).sorted(by: eventPreferenceSort)
         }
     }
 
