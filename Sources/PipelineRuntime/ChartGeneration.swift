@@ -269,19 +269,23 @@ enum ChartGenerator {
         var mappedLanes = Set<DrumLane>()
 
         let mapped = candidates.enumerated().compactMap { index, candidate -> DetectedDrumEvent? in
-            guard let onsetSeconds = timingValue(
-                candidate["onsetSeconds"]
-                    ?? candidate["onset_seconds"]
-                    ?? candidate["time"]
-                    ?? candidate["timestamp"]
-                    ?? candidate["timeSeconds"]
-                    ?? candidate["time_seconds"]
-                    ?? candidate["startSeconds"]
-                    ?? candidate["start_seconds"]
-                    ?? candidate["position"]
-                    ?? candidate["offset"]
-                    ?? candidate["onset"]
-            ) else {
+            let onsetValue = firstValue(
+                in: candidate,
+                keys: [
+                    "onsetSeconds",
+                    "onset_seconds",
+                    "time",
+                    "timestamp",
+                    "timeSeconds",
+                    "time_seconds",
+                    "startSeconds",
+                    "start_seconds",
+                    "position",
+                    "offset",
+                    "onset"
+                ]
+            )
+            guard let onsetSeconds = timingValue(from: onsetValue) else {
                 droppedMissingOnset += 1
                 return nil
             }
@@ -778,6 +782,18 @@ enum ChartGenerator {
         return []
     }
 
+    private static func firstValue(
+        in object: [String: RawJSONValue],
+        keys: [String]
+    ) -> RawJSONValue? {
+        for key in keys {
+            if let value = object[key] {
+                return value
+            }
+        }
+        return nil
+    }
+
     private static func extractEventObjects(from candidate: RawJSONValue?) -> [[String: RawJSONValue]] {
         guard let candidate else { return [] }
 
@@ -819,17 +835,21 @@ enum ChartGenerator {
         }
         guard let object = value.dictionary else { return nil }
 
-        if let direct = rawDouble(
-            object["startSeconds"]
-                ?? object["start_seconds"]
-                ?? object["time"]
-                ?? object["timestamp"]
-                ?? object["seconds"]
-                ?? object["offsetSeconds"]
-                ?? object["offset_seconds"]
-                ?? object["onsetSeconds"]
-                ?? object["onset_seconds"]
-        ) {
+        let directValue = firstValue(
+            in: object,
+            keys: [
+                "startSeconds",
+                "start_seconds",
+                "time",
+                "timestamp",
+                "seconds",
+                "offsetSeconds",
+                "offset_seconds",
+                "onsetSeconds",
+                "onset_seconds"
+            ]
+        )
+        if let direct = rawDouble(directValue) {
             return direct
         }
 
