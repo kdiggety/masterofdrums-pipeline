@@ -298,6 +298,37 @@ final class ChartGenerationTests: XCTestCase {
         XCTAssertEqual(generated.baseChart.chart.notes.filter { $0.lane == .kick || $0.lane == .snare }.map(\.lane), [.kick, .snare, .kick, .snare])
     }
 
+    func testGenerateReportsAnalyzerShapingDiagnosticsBeforeBaseChartGeneration() throws {
+        let analysis = makeAnalysis(raw: [
+            "beats": [0.0, 0.5, 1.0, 1.5, 2.0],
+            "drumEvents": [
+                ["eventID": "kick-1", "label": "kick", "onsetSeconds": 0.0, "velocity": 0.95],
+                ["eventID": "hat-1a", "label": "closed hat", "onsetSeconds": 0.0, "velocity": 0.55],
+                ["eventID": "hat-1b", "label": "closed hat", "onsetSeconds": 0.125, "velocity": 0.52],
+                ["eventID": "hat-1c", "label": "closed hat", "onsetSeconds": 0.25, "velocity": 0.50],
+                ["eventID": "snare-2", "label": "snare", "onsetSeconds": 0.5, "velocity": 0.92],
+                ["eventID": "hat-2a", "label": "closed hat", "onsetSeconds": 0.5, "velocity": 0.55],
+                ["eventID": "hat-2b", "label": "closed hat", "onsetSeconds": 0.625, "velocity": 0.52],
+                ["eventID": "hat-2c", "label": "closed hat", "onsetSeconds": 0.75, "velocity": 0.50]
+            ]
+        ], duration: 2.0)
+
+        let generated = ChartGenerator.generate(
+            from: analysis,
+            generatedAt: Date(timeIntervalSince1970: 0),
+            normalizedAnalysisArtifactURI: "file:///tmp/normalized.json"
+        )
+
+        let diagnostics = try XCTUnwrap(generated.normalized.drumEventDiagnostics)
+        XCTAssertEqual(diagnostics.rawCandidateCount, 8)
+        XCTAssertEqual(diagnostics.mappedCandidateCount, 8)
+        XCTAssertEqual(diagnostics.postShapingEventCount, generated.normalized.drumEvents.count)
+        XCTAssertEqual(generated.baseChart.chart.notes.count, diagnostics.postShapingEventCount)
+        XCTAssertGreaterThan(diagnostics.shapingReductionCount, 0)
+        XCTAssertEqual(generated.baseChart.drumEventDiagnostics?.postShapingEventCount, diagnostics.postShapingEventCount)
+        XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("Reduced analyzer-driven drum events by") }))
+    }
+
     func testGenerateKeepsSparseHatPulseOnHatOnlyDownbeatsWithoutDroppingBackbone() throws {
         let analysis = makeAnalysis(raw: [
             "beats": [0.0, 0.5, 1.0, 1.5, 2.0],
