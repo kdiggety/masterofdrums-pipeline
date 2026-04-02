@@ -132,7 +132,7 @@ def maybe_ffprobe_duration(input_path: str) -> float | None:
 def run_python_api(input_path: str, *, model: str, device: str, dbn: bool) -> tuple[list[float], list[float], list[str], str]:
     from beat_this.inference import File2Beats  # type: ignore
 
-    resolved_device = None if device == "auto" else device
+    resolved_device = "cpu" if device == "auto" else device
     tracker = File2Beats(checkpoint_path=model, device=resolved_device, dbn=dbn)
     beats, downbeats = tracker(input_path)
     return [round(float(value), 6) for value in beats], [round(float(value), 6) for value in downbeats], [], "python_api"
