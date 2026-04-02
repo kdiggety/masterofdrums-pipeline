@@ -917,6 +917,9 @@ enum ChartGenerator {
     }
 
     private static func mapLane(_ rawValue: RawJSONValue?) -> DrumLane? {
+        if let midiLane = mapMIDINoteLane(rawValue) {
+            return midiLane
+        }
         guard let raw = normalizedLaneLabel(rawValue) else { return nil }
         switch raw {
         case "kick", "bd", "bass_drum", "bassdrum", "bass_drum_1", "bass_drum_2", "bassdrum_1", "bassdrum_2", "kik", "kick_drum": return .kick
@@ -930,6 +933,24 @@ enum ChartGenerator {
         case "ride", "ride_cymbal", "ride_bell", "ride_1", "ride_2": return .ride
         case "clap", "handclap", "hand_clap": return .clap
         case "percussion", "perc", "cowbell", "shaker", "tambourine": return .percussion
+        default: return nil
+        }
+    }
+
+    private static func mapMIDINoteLane(_ rawValue: RawJSONValue?) -> DrumLane? {
+        guard let note = rawInt(rawValue) else { return nil }
+        switch note {
+        case 35, 36: return .kick
+        case 37, 38, 40: return .snare
+        case 42, 44: return .hihatClosed
+        case 46: return .hihatOpen
+        case 41, 43: return .tomLow
+        case 45: return .tomMid
+        case 47, 48, 50: return .tomHigh
+        case 49, 52, 55, 57: return .crash
+        case 51, 53, 59: return .ride
+        case 39: return .clap
+        case 54, 56, 58, 60, 82, 83: return .percussion
         default: return nil
         }
     }

@@ -349,6 +349,22 @@ public struct CorpusTagSummary: Codable, Sendable {
     }
 }
 
+public struct CorpusDifficultySummary: Codable, Sendable {
+    public let difficulty: String
+    public let totalExpectations: Int
+    public let passedExpectations: Int
+    public let failedExpectations: Int
+    public let missingExpectations: Int
+
+    public init(difficulty: String, totalExpectations: Int, passedExpectations: Int, failedExpectations: Int, missingExpectations: Int) {
+        self.difficulty = difficulty
+        self.totalExpectations = totalExpectations
+        self.passedExpectations = passedExpectations
+        self.failedExpectations = failedExpectations
+        self.missingExpectations = missingExpectations
+    }
+}
+
 public struct CorpusValueSummary: Codable, Sendable {
     public let key: String
     public let count: Int
@@ -368,6 +384,7 @@ public struct ChartEvaluationCorpusReport: Codable, Sendable {
     public let results: [ChartEvaluationResult]
     public let missingCharts: [String]
     public let tagSummaries: [CorpusTagSummary]
+    public let difficultySummaries: [CorpusDifficultySummary]
     public let sourceTypeSummaries: [CorpusValueSummary]
     public let reviewStatusSummaries: [CorpusValueSummary]
     public let baselineStatusSummaries: [CorpusValueSummary]
@@ -394,6 +411,13 @@ public struct ChartEvaluationCorpusReport: Codable, Sendable {
         }
         if !tagSummaries.isEmpty {
             lines.append("tag_summary " + tagSummaries.map { "\($0.tag)=\($0.passedExpectations)/\($0.totalExpectations)" }.joined(separator: " "))
+        }
+        if !difficultySummaries.isEmpty {
+            lines.append("difficulty_summary " + difficultySummaries.map { summary in
+                let failureText = summary.failedExpectations > 0 ? "/fail=\(summary.failedExpectations)" : ""
+                let missingText = summary.missingExpectations > 0 ? "/missing=\(summary.missingExpectations)" : ""
+                return "\(summary.difficulty)=\(summary.passedExpectations)/\(summary.totalExpectations)\(failureText)\(missingText)"
+            }.joined(separator: " "))
         }
         if !lintIssues.isEmpty {
             for issue in lintIssues {
@@ -423,6 +447,7 @@ public struct ChartEvaluationCorpusReport: Codable, Sendable {
         results: [ChartEvaluationResult],
         missingCharts: [String],
         tagSummaries: [CorpusTagSummary],
+        difficultySummaries: [CorpusDifficultySummary],
         sourceTypeSummaries: [CorpusValueSummary],
         reviewStatusSummaries: [CorpusValueSummary],
         baselineStatusSummaries: [CorpusValueSummary],
@@ -436,6 +461,7 @@ public struct ChartEvaluationCorpusReport: Codable, Sendable {
         self.results = results
         self.missingCharts = missingCharts
         self.tagSummaries = tagSummaries
+        self.difficultySummaries = difficultySummaries
         self.sourceTypeSummaries = sourceTypeSummaries
         self.reviewStatusSummaries = reviewStatusSummaries
         self.baselineStatusSummaries = baselineStatusSummaries
@@ -505,6 +531,7 @@ public enum ChartEvaluationRunner {
         var results: [ChartEvaluationResult] = []
         var missingCharts: [String] = []
         var tagStats: [String: (total: Int, passed: Int)] = [:]
+        var difficultyStats: [String: (total: Int, passed: Int, missing: Int)] = [:]
         let lintIssues = ChartEvaluationCorpusLinter.lint(corpus)
 
         for song in corpus.songs {
@@ -514,9 +541,13 @@ public enum ChartEvaluationRunner {
                     let current = tagStats[tag] ?? (0, 0)
                     tagStats[tag] = (current.total + 1, current.passed)
                 }
+                let difficultyCurrent = difficultyStats[expectation.difficulty] ?? (0, 0, 0)
+                difficultyStats[expectation.difficulty] = (difficultyCurrent.total + 1, difficultyCurrent.passed, difficultyCurrent.missing)
 
                 guard let chart = chartsForSong[expectation.difficulty] else {
                     missingCharts.append("\(song.id):\(expectation.difficulty)")
+                    let missingCurrent = difficultyStats[expectation.difficulty] ?? (0, 0, 0)
+                    difficultyStats[expectation.difficulty] = (missingCurrent.total, missingCurrent.passed, missingCurrent.missing + 1)
                     continue
                 }
                 let report = ChartQualityEvaluator.evaluate(chart: chart, against: expectation)
@@ -525,6 +556,8 @@ public enum ChartEvaluationRunner {
                         let current = tagStats[tag] ?? (0, 0)
                         tagStats[tag] = (current.total, current.passed + 1)
                     }
+                    let current = difficultyStats[expectation.difficulty] ?? (0, 0, 0)
+                    difficultyStats[expectation.difficulty] = (current.total, current.passed + 1, current.missing)
                 }
                 results.append(
                     ChartEvaluationResult(
@@ -557,6 +590,16 @@ public enum ChartEvaluationRunner {
                 failedExpectations: stats.total - stats.passed
             )
         }
+        let difficultySummaries = difficultyStats.keys.sorted().map { difficulty in
+            let stats = difficultyStats[difficulty] ?? (0, 0, 0)
+            return CorpusDifficultySummary(
+                difficulty: difficulty,
+                totalExpectations: stats.total,
+                passedExpectations: stats.passed,
+                failedExpectations: max(stats.total - stats.passed - stats.missing, 0),
+                missingExpectations: stats.missing
+            )
+        }
 
         return ChartEvaluationCorpusReport(
             schemaVersion: corpus.schemaVersion,
@@ -567,6 +610,7 @@ public enum ChartEvaluationRunner {
             results: results,
             missingCharts: missingCharts.sorted(),
             tagSummaries: tagSummaries,
+            difficultySummaries: difficultySummaries,
             sourceTypeSummaries: summarizeValues(corpus.songs.map(\.sourceType)),
             reviewStatusSummaries: summarizeValues(corpus.songs.map { $0.reviewStatus ?? "unspecified" }),
             baselineStatusSummaries: summarizeValues(corpus.songs.map { $0.baselineStatus ?? "unspecified" }),

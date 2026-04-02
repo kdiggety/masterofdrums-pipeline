@@ -181,6 +181,7 @@ For real clips, this is a better regression-review shape because:
 - per-song, per-difficulty results
 - explicit missing chart keys like `known-tone:easy`
 - per-tag summaries like `smoke=4/5`
+- per-difficulty summaries like `prototype=3/5/missing=1`
 - source-type summaries like `fixture_audio=3 real_clip=2`
 - review-status summaries like `approved_baseline=1 awaiting_baseline_review=1`
 - baseline-status summaries like `pending_review=2 approved_baseline=3`
@@ -195,6 +196,7 @@ source_summary fixture_audio=1 real_clip=1
 review_summary awaiting_baseline_review=1 synthetic_smoke=1
 baseline_summary pending_review=1 prototype_fixture=1
 tag_summary fills=0/1 fixture=1/2 real_clip=0/1 regression=0/1 smoke=1/2 synthetic=1/2
+difficulty_summary easy=0/1/missing=1 prototype=1/2/missing=1
 known-tone [prototype] PASS prototype score=1.00 notes=2 measures=1 lanes=kick,snare source=known-tone.wav source_type=fixture_audio duration=1.00s tags=synthetic,fixture,smoke review=synthetic_smoke baseline=prototype_fixture baseline_chart=none
 provenance bundled XCTest fixture
 snapshot lanes=kick,snare measures=1 notes=2

@@ -191,6 +191,61 @@ final class ChartGenerationTests: XCTestCase {
         XCTAssertTrue(generated.normalized.note?.contains("4x") == true)
     }
 
+    func testGenerateNormalizesNestedAnalyzerEventsAndMessyLabels() throws {
+        let analysis = makeAnalysis(raw: [
+            "response": [
+                "timing": [
+                    "beats": [
+                        ["time": ["seconds": 0.0]],
+                        ["time": ["seconds": 0.5]],
+                        ["time": ["seconds": 1.0]]
+                    ]
+                ],
+                "tracks": [
+                    [
+                        "items": [
+                            ["event": ["position": ["seconds": 0.0], "instrument": ["name": "Kick Drum"]]],
+                            ["event": ["position": ["seconds": 0.5], "instrument": ["label": "Side Stick"]]],
+                            ["event": ["position": ["seconds": 0.75], "instrument": ["label": "Tom-3"]]]
+                        ]
+                    ]
+                ]
+            ]
+        ])
+
+        let generated = ChartGenerator.generate(
+            from: analysis,
+            generatedAt: Date(timeIntervalSince1970: 0),
+            normalizedAnalysisArtifactURI: "file:///tmp/normalized.json"
+        )
+
+        XCTAssertEqual(generated.normalized.drumEvents.map(\.lane), [.kick, .snare, .tomLow])
+        XCTAssertEqual(generated.baseChart.chart.notes.map(\.tick), [0, 480, 720])
+        XCTAssertFalse(generated.normalized.warnings.contains(where: { $0.contains("heuristic playable groove") }))
+    }
+
+    func testGenerateMapsMIDICodedADTOFStyleEventsIntoGameplayLanes() throws {
+        let analysis = makeAnalysis(raw: [
+            "beats": [0.0, 0.5, 1.0],
+            "events": [
+                ["id": "kick", "time": 0.0, "class": 35, "velocity": 0.95],
+                ["id": "snare", "time": 0.5, "class": 38, "velocity": 0.80],
+                ["id": "hat", "time": 0.75, "class": 42, "velocity": 0.60],
+                ["id": "crash", "time": 1.0, "class": 49, "velocity": 0.90]
+            ]
+        ], duration: 1.5)
+
+        let generated = ChartGenerator.generate(
+            from: analysis,
+            generatedAt: Date(timeIntervalSince1970: 0),
+            normalizedAnalysisArtifactURI: "file:///tmp/normalized.json"
+        )
+
+        XCTAssertEqual(generated.normalized.drumEvents.map(\.lane), [.kick, .snare, .hihatClosed, .crash])
+        XCTAssertEqual(generated.baseChart.chart.notes.map(\.lane), [.kick, .snare, .hihatClosed, .crash])
+        XCTAssertFalse(generated.normalized.warnings.contains(where: { $0.contains("unmapped lanes") }))
+    }
+
     func testGenerateFallsBackToDeterministicQuarterNoteGridWithoutAnalyzerEvents() throws {
         let analysis = makeAnalysis(raw: [:], tempo: nil, duration: 1.0)
 

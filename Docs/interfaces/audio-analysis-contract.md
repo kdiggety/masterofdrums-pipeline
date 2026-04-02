@@ -106,9 +106,9 @@ For chart-generation normalization, looser wrapper outputs are also accepted whe
 - downbeat arrays at `downbeats`, `downbeatTimes`, `downbeat_times`, or nested under `timing.*`
 - subdivision/tatum arrays at `subdivisions`, `subdivisionTimes`, `subdivision_times`, `tatums`, `tatumTimes`, `tatum_times`, or nested under `timing.*`
 - timing entries as raw seconds or objects like `{ "time": { "seconds": ... } }`, `{ "start": { "seconds": ... } }`, `{ "position": { "seconds": ... } }`, `{ "offset": { "seconds": ... } }`
-- drum-event arrays at `drumEvents`, `drum_events`, `drumEventCandidates`, `events`, `hits`, `notes`, `candidates`, nested under `drums.*` / `percussion.*` / `transcription.*`, or wrapped inside `tracks[]`
-- event labels expressed directly or as small objects like `{ "instrument": { "label": "snare" } }` / `{ "lane": { "name": "closed hat" } }`
-- wrapper containers like `result`, `output`, `payload`, or `data`
+- drum-event arrays at `drumEvents`, `drum_events`, `drumEventCandidates`, `events`, `hits`, `notes`, `candidates`, `predictions`, `detections`, nested under `drums.*` / `percussion.*` / `transcription.*`, or wrapped inside `tracks[]` / `instruments[]`
+- event labels expressed directly or as small objects like `{ "instrument": { "label": "snare" } }`, `{ "lane": { "name": "closed hat" } }`, or nested event wrappers like `{ "event": { ... } }`
+- wrapper containers like `result`, `output`, `payload`, `data`, `response`, or `prediction`
 
 The worker will wrap that output into the stable contract, and downstream chart generation will attempt to normalize those common variants before falling back to heuristic timing/events.
 

@@ -173,6 +173,7 @@ final class PipelineRuntimeFixtureTests: XCTestCase {
         XCTAssertTrue(reportText.contains("review_summary awaiting_baseline_review=1 synthetic_smoke=1"))
         XCTAssertTrue(reportText.contains("baseline_summary pending_review=1 prototype_fixture=1"))
         XCTAssertTrue(reportText.contains("tag_summary"))
+        XCTAssertTrue(reportText.contains("difficulty_summary easy=0/1/missing=1 prototype=1/2/missing=1"))
         XCTAssertTrue(reportText.contains("fixture"))
         XCTAssertTrue(reportText.contains("smoke"))
         XCTAssertTrue(reportText.contains("synthetic"))
