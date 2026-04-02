@@ -9,6 +9,7 @@ struct ChartGenerationOutput {
 enum ChartGenerator {
     private static let fallbackSubdivisionsPerBeat = 4
     private static let supportedSubdivisionCandidates = [3, 4, 6, 8]
+    private static let maxClosedHihatPerBeat = 2
 
     static func generate(from analysis: AudioAnalysisContract, generatedAt: Date, normalizedAnalysisArtifactURI: String) -> ChartGenerationOutput {
         let timeSignature = TimeSignature(numerator: 4, denominator: 4)
@@ -370,7 +371,10 @@ enum ChartGenerator {
             return $0.onsetSeconds < $1.onsetSeconds
         }
 
-        return ReducedMappedEvents(events: reduced, deduplicatedCandidates: deduplicatedCandidates)
+        let shaped = shapeDetectedDrumEvents(reduced)
+        deduplicatedCandidates += max(reduced.count - shaped.count, 0)
+
+        return ReducedMappedEvents(events: shaped, deduplicatedCandidates: deduplicatedCandidates)
     }
 
     private static func isPreferredDuplicate(_ lhs: DetectedDrumEvent, _ rhs: DetectedDrumEvent) -> Bool {
@@ -384,6 +388,55 @@ enum ChartGenerator {
 
         if lhs.onsetSeconds != rhs.onsetSeconds { return lhs.onsetSeconds < rhs.onsetSeconds }
         return lhs.eventID < rhs.eventID
+    }
+
+    private static func shapeDetectedDrumEvents(_ events: [DetectedDrumEvent]) -> [DetectedDrumEvent] {
+        guard !events.isEmpty else { return [] }
+
+        let groupedByBeat = Dictionary(grouping: events) { $0.onsetBeatIndex ?? -1 }
+        return groupedByBeat.keys.sorted().flatMap { beatIndex in
+            guard let beatEvents = groupedByBeat[beatIndex] else { return [] }
+
+            let kicksAndSnares = beatEvents
+                .filter { $0.lane == .kick || $0.lane == .snare || $0.lane == .crash }
+                .sorted(eventPreferenceSort)
+
+            let hihats = beatEvents
+                .filter { $0.lane == .hihatClosed }
+                .sorted { lhs, rhs in
+                    let lhsPriority = hihatSubdivisionPriority(lhs.onsetSubdivisionIndex)
+                    let rhsPriority = hihatSubdivisionPriority(rhs.onsetSubdivisionIndex)
+                    if lhsPriority != rhsPriority { return lhsPriority < rhsPriority }
+                    return eventPreferenceSort(lhs, rhs)
+                }
+
+            var seenHiHatSubdivisions = Set<Int>()
+            let keptHihats = hihats.filter { event in
+                guard let subdivision = event.onsetSubdivisionIndex else { return false }
+                return seenHiHatSubdivisions.insert(subdivision).inserted
+            }
+            .prefix(maxClosedHihatPerBeat)
+
+            return (kicksAndSnares + keptHihats).sorted(eventPreferenceSort)
+        }
+    }
+
+    private static func hihatSubdivisionPriority(_ subdivisionIndex: Int?) -> Int {
+        guard let subdivisionIndex else { return Int.max }
+        switch subdivisionIndex % max(fallbackSubdivisionsPerBeat, 1) {
+        case 0: return 0
+        case 2: return 1
+        case 1, 3: return 2
+        default: return 3
+        }
+    }
+
+    private static func eventPreferenceSort(_ lhs: DetectedDrumEvent, _ rhs: DetectedDrumEvent) -> Bool {
+        if lhs.onsetSeconds != rhs.onsetSeconds { return lhs.onsetSeconds < rhs.onsetSeconds }
+        let lhsConfidence = lhs.confidence ?? lhs.velocity ?? 0
+        let rhsConfidence = rhs.confidence ?? rhs.velocity ?? 0
+        if lhsConfidence != rhsConfidence { return lhsConfidence > rhsConfidence }
+        return lhs.lane.rawValue < rhs.lane.rawValue
     }
 
     private static func heuristicDrumEvents(from beatGrid: [BeatGridEvent], confidence: Double?) -> [DetectedDrumEvent] {
