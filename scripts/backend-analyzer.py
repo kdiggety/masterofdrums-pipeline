@@ -36,6 +36,8 @@ MIN_EVENT_GAP_SECONDS = 0.12
 MAX_EVENT_GAP_SECONDS = 1.5
 DEFAULT_TEMPO_BPM = 120.0
 FFMPEG_DECODE_TIMEOUT_SECONDS = 20
+KICK_RECLASSIFY_LIMIT = 0.22
+SNARE_CONFIDENCE_FLOOR = 0.58
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -275,11 +277,23 @@ def classify_event(samples: list[float], sample_rate: int, onset_seconds: float)
     tail_energy = sum(abs(sample) for sample in tail) / len(tail)
     punch_ratio = avg_abs / max(1e-6, tail_energy)
 
-    if zcr < 0.08 and punch_ratio > 1.05:
-        return "kick", "kick", min(0.99, 0.55 + avg_abs * 1.6)
-    if zcr > 0.22:
-        return "closed_hihat", "closed hi hat", min(0.99, 0.45 + zcr * 1.4)
-    return "snare", "snare", min(0.99, 0.5 + avg_abs * 1.2)
+    low_window = window[:: max(1, sample_rate // 220)]
+    mid_window = window[:: max(1, sample_rate // 880)]
+    low_diff = [abs(right - left) for left, right in zip(low_window, low_window[1:])] or [0.0]
+    mid_diff = [abs(right - left) for left, right in zip(mid_window, mid_window[1:])] or [0.0]
+    low_motion = sum(low_diff) / len(low_diff)
+    mid_motion = sum(mid_diff) / len(mid_diff)
+    bass_ratio = avg_abs / max(1e-6, low_motion)
+    mid_ratio = mid_motion / max(1e-6, avg_abs)
+
+    if (zcr < 0.12 and punch_ratio > 1.02 and bass_ratio > 1.08) or (zcr < 0.08 and punch_ratio > 1.0):
+        confidence = min(0.99, 0.5 + avg_abs * 1.3 + max(0.0, bass_ratio - 1.0) * 0.25)
+        return "kick", "kick", confidence
+    if zcr > 0.24 or mid_ratio > 1.35:
+        confidence = min(0.99, 0.42 + max(zcr, min(mid_ratio / 2.0, 0.5)) * 1.25)
+        return "closed_hihat", "closed hi hat", confidence
+    confidence = min(0.99, 0.44 + avg_abs * 0.9 + min(mid_ratio, 1.0) * 0.08)
+    return "snare", "snare", confidence
 
 
 def build_segments(downbeats: list[float], duration: float) -> list[dict[str, Any]]:
@@ -315,9 +329,33 @@ def analyze_audio(input_path: str) -> dict[str, Any]:
     tempo_bpm = infer_tempo_bpm(onsets)
     beats = make_beat_grid(duration, onsets, tempo_bpm)
     downbeats = beats[::4] if beats else []
+
+    classified_events: list[tuple[float, str, str, float]] = []
+    for onset in onsets:
+        classified_events.append((onset, *classify_event(samples, sample_rate, onset)))
+
+    kick_candidates = [event for event in classified_events if event[1] == "kick"]
+    snare_candidates = [event for event in classified_events if event[1] == "snare"]
+    if not kick_candidates and snare_candidates:
+        reclassified: list[tuple[float, str, str, float]] = []
+        reclassified_count = max(1, int(round(len(snare_candidates) * KICK_RECLASSIFY_LIMIT)))
+        strongest = sorted(snare_candidates, key=lambda event: event[3], reverse=True)[:reclassified_count]
+        strongest_onsets = {round(event[0], 6) for event in strongest}
+        for onset, lane, label, confidence in classified_events:
+            if lane == "snare" and round(onset, 6) in strongest_onsets:
+                kick_confidence = min(0.92, max(0.52, confidence + 0.04))
+                reclassified.append((onset, "kick", "kick", kick_confidence))
+            else:
+                reclassified.append((onset, lane, label, confidence))
+        classified_events = reclassified
+        warnings.append("reclassified strongest snare-like hits as kick to avoid zero-kick output")
+
     drum_events: list[dict[str, Any]] = []
-    for index, onset in enumerate(onsets):
-        lane, label, confidence = classify_event(samples, sample_rate, onset)
+    filtered_snare_count = 0
+    for index, (onset, lane, label, confidence) in enumerate(classified_events):
+        if lane == "snare" and confidence < SNARE_CONFIDENCE_FLOOR:
+            filtered_snare_count += 1
+            continue
         drum_events.append(
             {
                 "eventID": f"evt-{index + 1}",
@@ -330,6 +368,8 @@ def analyze_audio(input_path: str) -> dict[str, Any]:
             }
         )
 
+    if filtered_snare_count:
+        warnings.append(f"filtered {filtered_snare_count} low-confidence snare candidates")
     if len(onsets) < 2:
         warnings.append("insufficient onset peaks for stable tempo inference; fell back to default beat grid")
     if not drum_events:
