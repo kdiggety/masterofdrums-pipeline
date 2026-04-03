@@ -222,6 +222,27 @@ If the repo moves, update the `.env` file or re-export the commands so they poin
 
 A bootstrap script is included at `scripts/setup-pipeline.sh`.
 
+Useful variants:
+
+```bash
+# base pipeline/db bootstrap
+scripts/setup-pipeline.sh
+
+# also seed analyzer env vars + helper scripts
+scripts/setup-pipeline.sh --bootstrap-analyzer
+
+# also create .venv and install requirements.txt into it
+scripts/setup-pipeline.sh --bootstrap-analyzer --auto-install-analyzer
+```
+
+When `--bootstrap-analyzer` is enabled, setup now also generates:
+
+- `scripts/check-analyzer-env.sh` — checks repo venv, `requirements.txt`, `ffmpeg`/`ffprobe`, and `beat_this` availability
+- `scripts/bootstrap-analyzer-venv.sh` — creates the repo-local venv and installs `requirements.txt`
+- `scripts/run-validate-analyzer.sh /path/to/test.wav` — runs the Swift analyzer validation command against a real file
+
+That keeps the Mac setup path closer to the repo's checked-in analyzer contract instead of relying on copy/pasted README commands.
+
 ## beat_this Primary Backend Bootstrap
 
 The intended analyzer stack is now:
