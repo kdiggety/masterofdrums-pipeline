@@ -195,7 +195,8 @@ export PIPELINE_ANALYZER_VALIDATION_MODE=require-timing
 export PIPELINE_AUDIO_ANALYZER_TIMEOUT_SECONDS=300
 export PIPELINE_AUDIO_ANALYZER_STDOUT_JSON=false
 
-# quick validation loop before touching the job queue
+# quick preflight + validation loop before touching the job queue
+swift run MasterOfDrumsPipeline doctor-audio-analyzer
 swift run MasterOfDrumsPipeline validate-audio-analyzer --source-uri file:///tmp/test.wav --source-type file --requested-by cli
 python3 ./scripts/test-analyzer-wrapper.py
 
@@ -252,6 +253,7 @@ Important setup notes:
 Verify the install before running the pipeline:
 
 ```bash
+swift run MasterOfDrumsPipeline doctor-audio-analyzer
 ./.venv/bin/python -c 'import importlib.util, shutil; print("beat_this_py:", bool(importlib.util.find_spec("beat_this"))); print("beat_this_cli:", shutil.which("beat_this"))'
 ```
 
