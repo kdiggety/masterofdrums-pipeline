@@ -429,13 +429,13 @@ public struct PipelineRuntime {
                 "segment_count": AnySendable(analysis.analysis.estimatedSegmentCount),
                 "duration_seconds": AnySendable(analysis.analysis.durationSeconds ?? 0),
                 "analyzer_command": AnySendable(analyzer.commandTemplate),
-                "timing_backend": AnySendable(analysis.analysis.timingProvenance?.backend),
-                "timing_source": AnySendable(analysis.analysis.timingProvenance?.timingSource),
-                "timing_backend_command": AnySendable(analysis.analysis.timingProvenance?.backendCommand),
-                "fallback_used": AnySendable(analysis.analysis.timingProvenance?.fallbackUsed),
-                "fallback_reason": AnySendable(analysis.analysis.timingProvenance?.fallbackSummary?.reason),
-                "fallback_category": AnySendable(analysis.analysis.timingProvenance?.fallbackSummary?.category),
-                "fallback_error_summary": AnySendable(analysis.analysis.timingProvenance?.fallbackSummary?.errorSummary)
+                "timing_backend": AnySendable(analysis.analysis.timingProvenance?.backend as Any),
+                "timing_source": AnySendable(analysis.analysis.timingProvenance?.timingSource as Any),
+                "timing_backend_command": AnySendable(analysis.analysis.timingProvenance?.backendCommand as Any),
+                "fallback_used": AnySendable(analysis.analysis.timingProvenance?.fallbackUsed as Any),
+                "fallback_reason": AnySendable(analysis.analysis.timingProvenance?.fallbackSummary?.reason as Any),
+                "fallback_category": AnySendable(analysis.analysis.timingProvenance?.fallbackSummary?.category as Any),
+                "fallback_error_summary": AnySendable(analysis.analysis.timingProvenance?.fallbackSummary?.errorSummary as Any)
             ],
             createdAt: now
         )
@@ -787,12 +787,13 @@ public struct PipelineRuntime {
     }
 
     private static func renderArtifactSummarySuffix(for artifact: ArtifactRecord) -> String {
-        guard !artifact.metadataJSON.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        guard let metadataJSON = artifact.metadataJSON,
+              !metadataJSON.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return ""
         }
 
         if artifact.artifactType == "audio_analysis",
-           let data = artifact.metadataJSON.data(using: .utf8),
+           let data = metadataJSON.data(using: .utf8),
            let summary = try? JSONDecoder.pipeline.decode(AudioAnalysisSummary.self, from: data) {
             return " summary=\"\(summary.operatorSummaryLine)\""
         }
