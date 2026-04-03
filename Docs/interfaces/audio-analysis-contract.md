@@ -124,6 +124,9 @@ The current wrapper/backend setup also commonly relies on these inherited operat
 - `PIPELINE_BEAT_THIS_DEVICE`
 - `PIPELINE_BEAT_THIS_DBN`
 - `PIPELINE_BEAT_THIS_FLOAT16`
+- `PIPELINE_ANALYZER_TIMING_BACKEND_COMMAND`
+- `PIPELINE_ANALYZER_EVENT_BACKEND_COMMAND`
+- `PIPELINE_ANALYZER_EVENT_POLICY`
 
 Preferred: emit the full pipeline contract directly.
 
@@ -153,6 +156,8 @@ For chart-generation normalization, looser wrapper outputs are also accepted whe
 
 The worker will wrap that output into the stable contract, and downstream chart generation will attempt to normalize those common variants before falling back to heuristic timing/events.
 
+Important current behavior: `scripts/beat-this-backend.py` is a timing backend, not a drum transcription backend. In the common mixed-source path, `beat_this` provides beat/downbeat timing while `heuristicDrumEvents` in chart generation supplies the drum-event scaffold. Diagnostics, warnings, and artifact notes should therefore be read as two independent questions: where timing came from, and where drum events came from.
+
 ## Wrapper fallback / validation policy
 
 For the current repo-local wrapper, the practical rollout policy is:
@@ -172,6 +177,8 @@ That gives the pipeline a conservative default:
 - **operators want legacy behavior** → keep using only `PIPELINE_ANALYZER_BACKEND_COMMAND`
 
 The wrapper records the selected backend, fallback policy, validation mode, and fallback reason under `runtime.*` in the backend payload so validation runs and saved artifacts make backend arbitration visible.
+
+When `scripts/hybrid-drum-events-backend.py` is used directly as the analyzer command, it also records `runtime.timingBackendCommand`, `runtime.eventBackendCommand`, `runtime.eventPolicy`, `runtime.eventBackendUsed`, and `runtime.eventBackendFailure` so merged timing/event experiments stay auditable in saved artifacts.
 
 ## Fast validation loop
 

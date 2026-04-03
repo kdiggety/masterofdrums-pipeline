@@ -90,8 +90,9 @@ Good next step:
 
 1. run it on a few short review clips outside the main worker path
 2. convert output through `scripts/adtof-output-adapter.py`
-3. feed the result through `validate-audio-analyzer` or a small chart-eval harness
-4. compare lane density and false-positive behavior against the heuristic baseline
+3. merge those stage-2 events with beat/downbeat timing via `scripts/hybrid-drum-events-backend.py`
+4. feed the merged result through `validate-audio-analyzer` or a small chart-eval harness
+5. compare lane density and false-positive behavior against the heuristic baseline
 
 Bad next step:
 

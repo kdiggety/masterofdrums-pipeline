@@ -149,6 +149,7 @@ Recent spike work for tasks 5/6:
 
 - `scripts/madmom-fallback-backend.py` makes the fallback path concrete enough to validate madmom-style beat/downbeat outputs without committing to a fragile production install yet
 - `scripts/adtof-output-adapter.py` and MIDI-aware lane normalization show the current runtime can already consume ADTOF-like drum-event outputs as a stage-2 event source
+- `scripts/hybrid-drum-events-backend.py` adds the next seam: keep `beat_this` (or another timing backend) as the beat/downbeat backbone, then optionally merge stage-2 drum-event candidates from a second backend/adapter into the same analyzer payload
 - sample fixtures for both spikes live under `scripts/fixtures/`
 
 ## Current Testable Slice
@@ -177,6 +178,14 @@ export PIPELINE_ANALYZER_PRIMARY_BACKEND_COMMAND="./.venv/bin/python ./scripts/b
 export PIPELINE_ANALYZER_FALLBACK_BACKEND_COMMAND="./.venv/bin/python ./scripts/backend-analyzer.py --input {input} --output {output}"
 export PIPELINE_ANALYZER_FALLBACK_POLICY=on-error-or-invalid
 export PIPELINE_ANALYZER_VALIDATION_MODE=require-timing
+
+# optional later-path seam: keep beat/downbeat timing from one backend,
+# then merge stage-2 drum-event candidates from another backend/adapter.
+# Example event sidecar command could be an ADTOF wrapper that writes loose drumEvents JSON.
+# export PIPELINE_AUDIO_ANALYZER_COMMAND="./.venv/bin/python ./scripts/hybrid-drum-events-backend.py --input {input} --output {output}"
+# export PIPELINE_ANALYZER_TIMING_BACKEND_COMMAND="./.venv/bin/python ./scripts/beat-this-backend.py --input {input} --output {output}"
+# export PIPELINE_ANALYZER_EVENT_BACKEND_COMMAND="./.venv/bin/python ./scripts/adtof-output-adapter.py --input-json ./scripts/fixtures/adtof-sample-events.json --output {output}"
+# export PIPELINE_ANALYZER_EVENT_POLICY=optional
 
 # optional madmom-style fallback spike instead of the heuristic backend
 # export PIPELINE_ANALYZER_FALLBACK_BACKEND_COMMAND="./.venv/bin/python ./scripts/madmom-fallback-backend.py --input {input} --output {output} --beats-file ./scripts/fixtures/madmom-sample.beats.txt --downbeats-file ./scripts/fixtures/madmom-sample.beats.txt"
@@ -229,6 +238,8 @@ Verify the install before running the pipeline:
 ```
 
 Expected result: `beat_this_py: True` or a non-empty `beat_this_cli:` path. If both are missing, the wrapper will fall back to the heuristic backend instead of using `beat_this`.
+
+Important nuance: the current `beat_this` backend provides beat/downbeat timing, not lane-level drum transcription. So a successful mixed-source run can legitimately use `beat_this` for timing while `heuristicDrumEvents` still supplies the chart's drum events. Recent diagnostics and artifact notes call that split out explicitly.
 
 Then set the analyzer env vars in your shell or `.env` file:
 
