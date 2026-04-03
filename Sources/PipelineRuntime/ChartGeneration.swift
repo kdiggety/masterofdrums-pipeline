@@ -19,7 +19,7 @@ enum ChartGenerator {
         let beatGrid = makeBeatGrid(from: analysis, timeSignature: timeSignature)
         let drumEventResult = makeDrumEvents(from: analysis, beatGrid: beatGrid)
         let measures = makeMeasures(from: beatGrid, timeSignature: timeSignature)
-        let warnings = combinedWarnings(for: analysis, beatGrid: beatGrid, drumEventDiagnostics: drumEventResult.diagnostics)
+        let warnings = combinedWarnings(for: analysis, beatGrid: beatGrid, drumEventResult: drumEventResult)
         let detectedSubdivisionCount = inferredSubdivisionsPerBeat(from: beatGrid)
         let usedAnalyzerEvents = drumEventResult.events.contains(where: { !($0.sourceLabel ?? "").hasPrefix("heuristic_") })
 
@@ -51,7 +51,7 @@ enum ChartGenerator {
         )
 
         let notes = makeChartNotes(from: normalized.drumEvents, ticksPerBeat: ticksPerBeat, beatGrid: beatGrid)
-        let lanes = Array(Set(notes.map(\.lane))).sorted { $0.rawValue < $1.rawValue }
+        let lanes = Array(Set(notes.map { $0.lane })).sorted { $0.rawValue < $1.rawValue }
         let baseChart = BaseChartContract(
             source: BaseChartSource(
                 normalizedAnalysisArtifactURI: normalizedAnalysisArtifactURI,
@@ -85,7 +85,7 @@ enum ChartGenerator {
         let laneMappingsUsed: Set<DrumLane>
     }
 
-    private static func combinedWarnings(for analysis: AudioAnalysisContract, beatGrid: [BeatGridEvent], drumEventDiagnostics: DrumEventResult) -> [String] {
+    private static func combinedWarnings(for analysis: AudioAnalysisContract, beatGrid: [BeatGridEvent], drumEventResult: DrumEventResult) -> [String] {
         var warnings = analysis.warnings
         if analysis.analysis.estimatedTempoBPM == nil {
             warnings.append("No analyzer tempo found; fallback 120 BPM grid used for chart-generation staging.")
@@ -96,25 +96,25 @@ enum ChartGenerator {
         if beatGrid.isEmpty {
             warnings.append("No usable beat grid anchors were available; chart timing may be incomplete.")
         }
-        if drumEventDiagnostics.diagnostics.usedFallback {
+        if drumEventResult.diagnostics.usedFallback {
             warnings.append("Analyzer did not provide usable drum-event candidates; emitted heuristic playable groove instead.")
         }
-        if drumEventDiagnostics.diagnostics.droppedMissingOnsetCount > 0 {
-            warnings.append("Dropped \(drumEventDiagnostics.diagnostics.droppedMissingOnsetCount) drum-event candidates without onset timing.")
+        if drumEventResult.diagnostics.droppedMissingOnsetCount > 0 {
+            warnings.append("Dropped \(drumEventResult.diagnostics.droppedMissingOnsetCount) drum-event candidates without onset timing.")
         }
-        if drumEventDiagnostics.diagnostics.droppedUnknownLaneCount > 0 {
-            warnings.append("Dropped \(drumEventDiagnostics.diagnostics.droppedUnknownLaneCount) drum-event candidates with unmapped lanes.")
+        if drumEventResult.diagnostics.droppedUnknownLaneCount > 0 {
+            warnings.append("Dropped \(drumEventResult.diagnostics.droppedUnknownLaneCount) drum-event candidates with unmapped lanes.")
         }
-        if drumEventDiagnostics.diagnostics.deduplicatedCandidateCount > 0 {
-            warnings.append("Collapsed \(drumEventDiagnostics.diagnostics.deduplicatedCandidateCount) analyzer drum-event duplicates that landed on the same lane and quantized slot.")
+        if drumEventResult.diagnostics.deduplicatedCandidateCount > 0 {
+            warnings.append("Collapsed \(drumEventResult.diagnostics.deduplicatedCandidateCount) analyzer drum-event duplicates that landed on the same lane and quantized slot.")
         }
-        if drumEventDiagnostics.diagnostics.shapingReductionCount > 0 {
-            warnings.append("Reduced analyzer-driven drum events by \(drumEventDiagnostics.diagnostics.shapingReductionCount) during normalization shaping before base-chart note generation.")
+        if drumEventResult.diagnostics.shapingReductionCount > 0 {
+            warnings.append("Reduced analyzer-driven drum events by \(drumEventResult.diagnostics.shapingReductionCount) during normalization shaping before base-chart note generation.")
         }
-        if drumEventDiagnostics.diagnostics.rawCandidateCount > 0, drumEventDiagnostics.diagnostics.mappedCandidateCount < drumEventDiagnostics.diagnostics.rawCandidateCount {
-            warnings.append("Mapped \(drumEventDiagnostics.diagnostics.mappedCandidateCount) of \(drumEventDiagnostics.diagnostics.rawCandidateCount) analyzer drum-event candidates into gameplay lanes.")
+        if drumEventResult.diagnostics.rawCandidateCount > 0, drumEventResult.diagnostics.mappedCandidateCount < drumEventResult.diagnostics.rawCandidateCount {
+            warnings.append("Mapped \(drumEventResult.diagnostics.mappedCandidateCount) of \(drumEventResult.diagnostics.rawCandidateCount) analyzer drum-event candidates into gameplay lanes.")
         }
-        if let maxError = drumEventDiagnostics.maxQuantizationErrorSeconds, maxError > 0.05 {
+        if let maxError = drumEventResult.maxQuantizationErrorSeconds, maxError > 0.05 {
             warnings.append(String(format: "Quantization drift reached %.3f seconds at the furthest mapped drum event.", maxError))
         }
         var seen = Set<String>()
@@ -332,20 +332,18 @@ enum ChartGenerator {
         let fallback = heuristicDrumEvents(from: beatGrid, confidence: analysis.analysis.confidence)
         return DrumEventResult(
             events: fallback,
-            diagnostics: DrumEventDiagnosticsResult(
-                counts: DrumEventDiagnostics(
-                    rawCandidateCount: candidates.count,
-                    mappedCandidateCount: mapped.count,
-                    postShapingEventCount: fallback.count,
-                    usedFallback: true,
-                    droppedMissingOnsetCount: droppedMissingOnset,
-                    droppedUnknownLaneCount: droppedUnknownLane,
-                    deduplicatedCandidateCount: 0,
-                    shapingReductionCount: 0
-                ),
-                maxQuantizationErrorSeconds: nil,
-                laneMappingsUsed: Set(fallback.map(\.lane))
-            )
+            diagnostics: DrumEventDiagnostics(
+                rawCandidateCount: candidates.count,
+                mappedCandidateCount: mapped.count,
+                postShapingEventCount: fallback.count,
+                usedFallback: true,
+                droppedMissingOnsetCount: droppedMissingOnset,
+                droppedUnknownLaneCount: droppedUnknownLane,
+                deduplicatedCandidateCount: 0,
+                shapingReductionCount: 0
+            ),
+            maxQuantizationErrorSeconds: nil,
+            laneMappingsUsed: Set(fallback.map { $0.lane })
         )
     }
 
