@@ -358,6 +358,20 @@ final class ChartQualityEvaluationTests: XCTestCase {
         XCTAssertTrue(text.contains("measure_density m0=2"))
         XCTAssertTrue(text.contains("tick=0:beat=0:sub=0:lane=kick:vel=1.00"))
         XCTAssertTrue(text.contains("tick=480:beat=1:sub=4:lane=snare:vel=0.70"))
+
+        let packaged = report.packagedReport()
+        XCTAssertEqual(packaged.summary.status, "PASS")
+        XCTAssertEqual(packaged.summary.totalExpectations, 1)
+        XCTAssertEqual(packaged.summary.passedExpectations, 1)
+        XCTAssertEqual(packaged.summary.failedExpectations, 0)
+        XCTAssertEqual(packaged.summary.missingChartCount, 0)
+        XCTAssertEqual(packaged.summary.lintIssueCount, 0)
+        XCTAssertEqual(packaged.summary.topTags, ["regression", "smoke"])
+        XCTAssertEqual(packaged.summary.sourceTypes, ["real_clip"])
+        XCTAssertEqual(packaged.summary.reviewStates, ["approved_baseline"])
+        XCTAssertEqual(packaged.summary.baselineStates, ["approved_baseline"])
+        XCTAssertEqual(packaged.text, text)
+        XCTAssertEqual(packaged.report.totalExpectations, 1)
     }
 
     private func makeChart(difficulty: String, measures: Int, notes: [BaseChartNote]) -> BaseChartContract {

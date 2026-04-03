@@ -313,6 +313,25 @@ final class PipelineRuntimeFixtureTests: XCTestCase {
         let persisted = try decode(AudioAnalysisContract.self, from: String(decoding: Data(contentsOf: outputURL), as: UTF8.self))
         XCTAssertEqual(persisted.analysis.artifactURI, outputURL.absoluteString)
         XCTAssertEqual(persisted.source.sourceURI, fixtureURL.absoluteString)
+
+        let summaryJSONURL = tempRoot.appendingPathComponent("validated-analysis.summary.json")
+        let summaryTextURL = tempRoot.appendingPathComponent("validated-analysis.summary.txt")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: summaryJSONURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: summaryTextURL.path))
+
+        let summary = try decode(AudioAnalyzerValidationReport.self, from: String(decoding: Data(contentsOf: summaryJSONURL), as: UTF8.self))
+        XCTAssertEqual(summary.sourceURI, fixtureURL.absoluteString)
+        XCTAssertEqual(summary.outputPath, outputURL.path)
+        XCTAssertEqual(summary.artifactURI, outputURL.absoluteString)
+        XCTAssertEqual(summary.summary.segmentCount, 0)
+        XCTAssertEqual(summary.summary.audioTrackCount, 1)
+        XCTAssertEqual(summary.summary.estimatedTempoBPM, 123.0)
+        XCTAssertEqual(summary.warnings, ["validated"])
+
+        let summaryText = String(decoding: Data(contentsOf: summaryTextURL), as: UTF8.self)
+        XCTAssertTrue(summaryText.contains("analyzer validation summary: PASS"))
+        XCTAssertTrue(summaryText.contains("tempo=123.00"))
+        XCTAssertTrue(summaryText.contains("warnings: validated"))
     }
 
     func testWorkerCanDelegateThroughWrapperUsingBackendCommandEnvironmentVariable() async throws {

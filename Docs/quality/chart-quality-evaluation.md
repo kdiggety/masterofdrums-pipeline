@@ -199,6 +199,7 @@ For real clips, this is a better regression-review shape because:
 - baseline-status summaries like `pending_review=2 approved_baseline=3`
 - corpus lint issues
 - `renderText()` output intended for regression assertions and future CLI printing
+- `operatorSummary` / `packagedReport()` helpers so wrappers or CI upload steps can carry a compact machine-readable status plus the full text report without inventing a second ad-hoc schema
 
 Example report shape:
 

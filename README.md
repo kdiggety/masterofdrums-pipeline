@@ -199,6 +199,14 @@ export PIPELINE_AUDIO_ANALYZER_STDOUT_JSON=false
 swift run MasterOfDrumsPipeline doctor-audio-analyzer
 swift run MasterOfDrumsPipeline validate-audio-analyzer --source-uri file:///tmp/test.wav --source-type file --requested-by cli
 python3 ./scripts/test-analyzer-wrapper.py
+python3 ./scripts/test-compare-timing-paths.py
+
+# compare the same source through primary-only vs forced-fallback timing paths
+python3 ./scripts/compare-timing-paths.py --input /tmp/test.wav --output-dir ./tmp/compare-test
+
+# validate-audio-analyzer still prints the full normalized JSON to stdout,
+# but now also emits a short operator summary to stderr, e.g.:
+# [pipeline] analyzer summary: duration=123.45s | tempo≈120 bpm | segments=42 | tracks=1 | confidence=0.81 | timing=beat_this via fallback, selected=fallback, fallback=validation: payload did not contain recognizable beat/downbeat/subdivision timing
 
 swift run MasterOfDrumsPipeline init-db
 swift run MasterOfDrumsPipeline enqueue-audio-ingest --source-uri file:///tmp/test.wav --source-type file --requested-by cli
@@ -207,6 +215,8 @@ swift run MasterOfDrumsPipeline list-jobs
 swift run MasterOfDrumsPipeline list-events --limit 20
 swift run MasterOfDrumsPipeline list-artifacts --limit 20
 ```
+
+`list-artifacts` now appends a compact `summary="..."` field for `audio_analysis` artifacts so operators can spot the selected timing backend / fallback path without opening the JSON artifact by hand.
 
 For a repeatable operator-facing smoke run that exercises the same CLI surface end to end with a bundled WAV fixture and a deterministic mock analyzer, use:
 
@@ -313,7 +323,15 @@ Recommended validation workflow after setting those vars:
 ./.venv/bin/python -c 'import importlib.util, shutil; print("beat_this_py:", bool(importlib.util.find_spec("beat_this"))); print("beat_this_cli:", shutil.which("beat_this"))'
 swift run MasterOfDrumsPipeline validate-audio-analyzer --source-uri file:///tmp/test.wav --source-type file --requested-by cli --output-path /tmp/audio-analysis.json
 python3 ./scripts/test-analyzer-wrapper.py
+python3 ./scripts/compare-timing-paths.py --input /tmp/test.wav --output-dir ./tmp/compare-test
 ```
+
+`validate-audio-analyzer` still prints the full persisted artifact JSON to stdout. When `--output-path` is used, it now also writes two wrapper-friendly sidecars next to the artifact:
+
+- `/tmp/audio-analysis.summary.json` — compact machine-readable validation summary
+- `/tmp/audio-analysis.summary.txt` — operator-facing text summary with backend/fallback/warning details
+
+That keeps the existing wrapper contract intact while giving launchers/GUI glue an easier surface to inspect than the full artifact payload.
 
 That sequence catches the current failure modes quickly:
 

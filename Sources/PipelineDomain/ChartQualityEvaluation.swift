@@ -413,6 +413,64 @@ public struct CorpusValueSummary: Codable, Sendable {
     }
 }
 
+public struct ChartEvaluationCorpusOperatorSummary: Codable, Sendable {
+    public let schemaVersion: String
+    public let generatedAt: Date
+    public let status: String
+    public let totalExpectations: Int
+    public let passedExpectations: Int
+    public let failedExpectations: Int
+    public let missingChartCount: Int
+    public let lintIssueCount: Int
+    public let missingCharts: [String]
+    public let topTags: [String]
+    public let sourceTypes: [String]
+    public let reviewStates: [String]
+    public let baselineStates: [String]
+
+    public init(
+        schemaVersion: String,
+        generatedAt: Date,
+        status: String,
+        totalExpectations: Int,
+        passedExpectations: Int,
+        failedExpectations: Int,
+        missingChartCount: Int,
+        lintIssueCount: Int,
+        missingCharts: [String],
+        topTags: [String],
+        sourceTypes: [String],
+        reviewStates: [String],
+        baselineStates: [String]
+    ) {
+        self.schemaVersion = schemaVersion
+        self.generatedAt = generatedAt
+        self.status = status
+        self.totalExpectations = totalExpectations
+        self.passedExpectations = passedExpectations
+        self.failedExpectations = failedExpectations
+        self.missingChartCount = missingChartCount
+        self.lintIssueCount = lintIssueCount
+        self.missingCharts = missingCharts
+        self.topTags = topTags
+        self.sourceTypes = sourceTypes
+        self.reviewStates = reviewStates
+        self.baselineStates = baselineStates
+    }
+}
+
+public struct ChartEvaluationCorpusPackagedReport: Codable, Sendable {
+    public let summary: ChartEvaluationCorpusOperatorSummary
+    public let text: String
+    public let report: ChartEvaluationCorpusReport
+
+    public init(summary: ChartEvaluationCorpusOperatorSummary, text: String, report: ChartEvaluationCorpusReport) {
+        self.summary = summary
+        self.text = text
+        self.report = report
+    }
+}
+
 public struct ChartEvaluationCorpusReport: Codable, Sendable {
     public let schemaVersion: String
     public let generatedAt: Date
@@ -434,6 +492,28 @@ public struct ChartEvaluationCorpusReport: Codable, Sendable {
 
     public var summary: String {
         "corpus pass=\(passedExpectations)/\(totalExpectations) failed=\(failedExpectations) missing=\(missingCharts.count) tags=\(tagSummaries.count) lint=\(lintIssues.count)"
+    }
+
+    public var operatorSummary: ChartEvaluationCorpusOperatorSummary {
+        ChartEvaluationCorpusOperatorSummary(
+            schemaVersion: schemaVersion,
+            generatedAt: generatedAt,
+            status: passed ? "PASS" : "FAIL",
+            totalExpectations: totalExpectations,
+            passedExpectations: passedExpectations,
+            failedExpectations: failedExpectations,
+            missingChartCount: missingCharts.count,
+            lintIssueCount: lintIssues.count,
+            missingCharts: missingCharts,
+            topTags: tagSummaries.map(\.tag),
+            sourceTypes: sourceTypeSummaries.map(\.key),
+            reviewStates: reviewStatusSummaries.map(\.key),
+            baselineStates: baselineStatusSummaries.map(\.key)
+        )
+    }
+
+    public func packagedReport() -> ChartEvaluationCorpusPackagedReport {
+        ChartEvaluationCorpusPackagedReport(summary: operatorSummary, text: renderText(), report: self)
     }
 
     public func renderText() -> String {

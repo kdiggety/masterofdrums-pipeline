@@ -86,6 +86,7 @@ public struct PipelineRuntime {
 
         case .validateAudioAnalyzer(let sourceURI, let sourceType, let requestedBy, let outputPath):
             let analysis = try validateAudioAnalyzer(sourceURI: sourceURI, sourceType: sourceType, requestedBy: requestedBy, outputPath: outputPath)
+            fputs("[pipeline] analyzer summary: \(analysis.analysis.operatorSummaryLine)\n", stderr)
             print(analysis.toJSONString())
 
         case .doctorAudioAnalyzer:
@@ -149,7 +150,8 @@ public struct PipelineRuntime {
                 for artifact in results {
                     let workflowLabel = artifact.workflowID ?? "-"
                     let jobLabel = artifact.jobID ?? "-"
-                    print("\(Self.timestamp(artifact.createdAt)) workflow=\(workflowLabel) job=\(jobLabel) type=\(artifact.artifactType) uri=\(artifact.uri)")
+                    let summarySuffix = Self.renderArtifactSummarySuffix(for: artifact)
+                    print("\(Self.timestamp(artifact.createdAt)) workflow=\(workflowLabel) job=\(jobLabel) type=\(artifact.artifactType) uri=\(artifact.uri)\(summarySuffix)")
                 }
             }
 
@@ -515,7 +517,21 @@ public struct PipelineRuntime {
             rawAnalyzerOutput: analysis.rawAnalyzerOutput
         )
         try persisted.write(to: outputURL)
+
+        let report = AudioAnalyzerValidationReport(
+            analysis: persisted,
+            sourceFilePath: filePath,
+            outputPath: outputURL.path
+        )
+        let summaryJSONURL = outputURL.deletingPathExtension().appendingPathExtension("summary.json")
+        let summaryTextURL = outputURL.deletingPathExtension().appendingPathExtension("summary.txt")
+        try report.writeJSON(to: summaryJSONURL)
+        try report.writeText(to: summaryTextURL)
+
         fputs("[pipeline] analyzer validation artifact: \(outputURL.path)\n", stderr)
+        fputs("[pipeline] analyzer validation summary json: \(summaryJSONURL.path)\n", stderr)
+        fputs("[pipeline] analyzer validation summary text: \(summaryTextURL.path)\n", stderr)
+        fputs(report.renderText() + "\n", stderr)
         return persisted
     }
 
@@ -761,6 +777,20 @@ public struct PipelineRuntime {
             createdAt: createdAt
         )
         try await events.append(event)
+    }
+
+    private static func renderArtifactSummarySuffix(for artifact: ArtifactRecord) -> String {
+        guard !artifact.metadataJSON.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return ""
+        }
+
+        if artifact.artifactType == "audio_analysis",
+           let data = artifact.metadataJSON.data(using: .utf8),
+           let summary = try? JSONDecoder.pipeline.decode(AudioAnalysisSummary.self, from: data) {
+            return " summary=\"\(summary.operatorSummaryLine)\""
+        }
+
+        return ""
     }
 
     private static func baseChartMetadataJSON(from chart: BaseChartContract) -> String {
@@ -1082,6 +1112,118 @@ public struct AudioIngestResult: Codable, Sendable {
         guard let data = try? encoder.encode(self) else { return "{}" }
         return String(decoding: data, as: UTF8.self)
     }
+}
+
+public struct AudioAnalyzerValidationReport: Codable, Sendable {
+    public let schemaVersion: String
+    public let generatedAt: Date
+    public let sourceURI: String
+    public let sourceType: String
+    public let requestedBy: String
+    public let sourceFilePath: String
+    public let outputPath: String
+    public let artifactURI: String
+    public let summary: AudioAnalyzerValidationSummary
+    public let warnings: [String]
+    public let note: String?
+
+    public init(analysis: AudioAnalysisContract, sourceFilePath: String, outputPath: String, generatedAt: Date = Date()) {
+        self.schemaVersion = "1.0.0"
+        self.generatedAt = generatedAt
+        self.sourceURI = analysis.source.sourceURI
+        self.sourceType = analysis.source.sourceType
+        self.requestedBy = analysis.source.requestedBy
+        self.sourceFilePath = sourceFilePath
+        self.outputPath = outputPath
+        self.artifactURI = analysis.analysis.artifactURI ?? URL(fileURLWithPath: outputPath).absoluteString
+        self.summary = AudioAnalyzerValidationSummary(analysis: analysis.analysis, segmentCount: analysis.segments.count)
+        self.warnings = analysis.warnings
+        self.note = analysis.note
+    }
+
+    public func toJSONString() -> String {
+        let encoder = JSONEncoder.pipeline
+        guard let data = try? encoder.encode(self) else { return "{}" }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    public func renderText() -> String {
+        var lines = [
+            "[pipeline] analyzer validation summary: PASS source_type=\(sourceType) requested_by=\(requestedBy)",
+            "[pipeline] analysis duration=\(summary.durationText) tempo=\(summary.tempoText) confidence=\(summary.confidenceText) segments=\(summary.segmentCount) tracks=\(summary.audioTrackCount)",
+            "[pipeline] runtime backend=\(summary.backendText) selected=\(summary.selectedBackendText) fallback_used=\(summary.fallbackUsedText) timing=\(summary.timingSourceText)",
+            "[pipeline] artifact uri=\(artifactURI)",
+            "[pipeline] output path=\(outputPath)"
+        ]
+        if !warnings.isEmpty {
+            lines.append("[pipeline] warnings: " + warnings.joined(separator: " | "))
+        }
+        if let note, !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            lines.append("[pipeline] note: \(note)")
+        }
+        if let fallbackReason = summary.fallbackReason {
+            lines.append("[pipeline] fallback_reason: \(fallbackReason)")
+        }
+        if let fallbackErrorSummary = summary.fallbackErrorSummary {
+            lines.append("[pipeline] fallback_error: \(fallbackErrorSummary)")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    public func writeJSON(to url: URL) throws {
+        try toJSONString().write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    public func writeText(to url: URL) throws {
+        try renderText().write(to: url, atomically: true, encoding: .utf8)
+    }
+}
+
+public struct AudioAnalyzerValidationSummary: Codable, Sendable {
+    public let analyzedAt: Date
+    public let durationSeconds: Double?
+    public let estimatedTempoBPM: Double?
+    public let confidence: Double?
+    public let segmentCount: Int
+    public let audioTrackCount: Int
+    public let timingBackend: String?
+    public let selectedBackend: String?
+    public let timingSource: String?
+    public let fallbackUsed: Bool
+    public let fallbackReason: String?
+    public let fallbackErrorSummary: String?
+
+    public init(analysis: AudioAnalysisSummary, segmentCount: Int) {
+        self.analyzedAt = analysis.analyzedAt
+        self.durationSeconds = analysis.durationSeconds
+        self.estimatedTempoBPM = analysis.estimatedTempoBPM
+        self.confidence = analysis.confidence
+        self.segmentCount = segmentCount
+        self.audioTrackCount = analysis.audioTrackCount
+        self.timingBackend = analysis.timingProvenance?.backend ?? analysis.runtimeBackend
+        self.selectedBackend = analysis.timingProvenance?.selectedBackend ?? analysis.runtimeSelectedBackend
+        self.timingSource = analysis.timingProvenance?.timingSource
+        self.fallbackUsed = analysis.timingProvenance?.fallbackUsed ?? analysis.runtimeFallbackUsed ?? false
+        self.fallbackReason = analysis.timingProvenance?.fallbackSummary?.reason ?? analysis.runtimeFallbackReason
+        self.fallbackErrorSummary = analysis.timingProvenance?.fallbackSummary?.errorSummary ?? analysis.runtimeFallbackErrorSummary?.errorSummary
+    }
+
+    public var durationText: String {
+        durationSeconds.map { String(format: "%.2fs", $0) } ?? "unknown"
+    }
+
+    public var tempoText: String {
+        estimatedTempoBPM.map { String(format: "%.2f", $0) } ?? "unknown"
+    }
+
+    public var confidenceText: String {
+        confidence.map { String(format: "%.2f", $0) } ?? "unknown"
+    }
+
+    public var backendText: String { timingBackend ?? "unknown" }
+    public var selectedBackendText: String { selectedBackend ?? "unknown" }
+    public var timingSourceText: String { timingSource ?? "unknown" }
+    public var fallbackUsedText: String { fallbackUsed ? "true" : "false" }
 }
 
 public struct AudioAnalyzerConfiguration: Sendable {
