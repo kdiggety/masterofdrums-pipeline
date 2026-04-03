@@ -207,6 +207,14 @@ swift run MasterOfDrumsPipeline list-events --limit 20
 swift run MasterOfDrumsPipeline list-artifacts --limit 20
 ```
 
+For a repeatable operator-facing smoke run that exercises the same CLI surface end to end with a bundled WAV fixture and a deterministic mock analyzer, use:
+
+```bash
+scripts/worker-smoke.sh
+```
+
+That harness provisions an isolated temp database/artifact root, runs `init-db`, `enqueue-audio-ingest`, `worker`, `list-jobs`, `list-events`, and `list-artifacts`, then asserts that the expected job states, workflow events, and artifact types are present. Add `--keep-workdir` if you want to inspect the generated SQLite DB, artifacts, and per-command logs afterward.
+
 If the repo moves, update the `.env` file or re-export the commands so they point at the venv that lives inside the current checkout. The analyzer command examples above intentionally pin the interpreter to `./.venv/bin/python` instead of relying on whichever `python3` happens to be first on `PATH`.
 
 ## Setup Script
