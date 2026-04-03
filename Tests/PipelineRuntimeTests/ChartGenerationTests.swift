@@ -446,6 +446,28 @@ final class ChartGenerationTests: XCTestCase {
         XCTAssertTrue(generated.normalized.note?.contains("4x fallback subdivision") == true)
     }
 
+    func testGenerateMakesTimingVsEventSourcesExplicitWhenAnalyzerOnlyProvidesTiming() throws {
+        let analysis = makeAnalysis(raw: [
+            "beats": [0.0, 0.5, 1.0],
+            "downbeats": [0.0]
+        ])
+
+        let generated = ChartGenerator.generate(
+            from: analysis,
+            generatedAt: Date(timeIntervalSince1970: 0),
+            normalizedAnalysisArtifactURI: "file:///tmp/normalized.json"
+        )
+
+        XCTAssertFalse(generated.normalized.beatGrid.isEmpty)
+        XCTAssertFalse(generated.normalized.drumEvents.isEmpty)
+        XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("Analyzer timing was preserved, but analyzer drum-event candidates were unusable; heuristicDrumEvents supplied the playable drum events instead.") }))
+        XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("Timing/events split: timing source=analyzer; drum-event source=heuristicDrumEvents") }))
+        XCTAssertTrue(generated.normalized.note?.contains("analyzer-provided timing") == true)
+        XCTAssertTrue(generated.normalized.note?.contains("heuristicDrumEvents fallback shaping") == true)
+        XCTAssertTrue(generated.baseChart.note?.contains("analyzer-provided timing") == true)
+        XCTAssertTrue(generated.baseChart.note?.contains("heuristicDrumEvents fallback output") == true)
+    }
+
     private func makeAnalysis(raw: [String: Any], tempo: Double? = 120.0, duration: Double? = 1.0) -> AudioAnalysisContract {
         AudioAnalysisContract(
             source: AudioAnalysisSource(sourceType: "file", sourceURI: "file:///tmp/test.wav", requestedBy: "test"),

@@ -233,7 +233,7 @@ def make_payload(input_path: str, beats: list[float], downbeats: list[float], wa
         "downbeats": downbeats,
         "segments": build_segments(downbeats, duration),
         "warnings": warnings,
-        "note": "beat_this backend emitted beat/downbeat timing. Lane-level drum events still come from downstream heuristics or future transcription stages.",
+        "note": "beat_this backend emitted beat/downbeat timing only. It does not emit lane-level drum events; chart generation may therefore pair this timing with heuristicDrumEvents output or a future transcription backend.",
         "runtime": {
             "backend": "scripts/beat-this-backend.py",
             "mode": mode,
