@@ -226,12 +226,20 @@ Minimal Python-side bootstrap for the real primary path:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python3 -m pip install --upgrade pip
-python3 -m pip install -r requirements.txt
-# ffmpeg is recommended for non-WAV input decoding
+./.venv/bin/python -m pip install --upgrade pip
+./.venv/bin/python -m pip install -r requirements.txt
+brew install ffmpeg
 ```
 
-The checked-in [`requirements.txt`](/Users/klewisjr/Development/MacOS/masterofdrums-pipeline/requirements.txt) captures the current repo-local analyzer stack so future Mac worker setup does not depend on copying package names out of the README. If you need a platform-specific PyTorch install later, add it explicitly on top of this base requirements file.
+The checked-in [`requirements.txt`](/Users/klewisjr/Development/MacOS/masterofdrums-pipeline/requirements.txt) captures the current repo-local analyzer stack so future Mac worker setup does not depend on copying package names out of the README.
+
+Important setup notes:
+
+- Use the repo-local `.venv` for analyzer installs and validation. On Homebrew-managed Python, installing into the global interpreter can fail with `externally-managed-environment`.
+- Prefer `./.venv/bin/python -m pip ...` over a bare `pip ...` so the install target is unambiguous.
+- `ffmpeg` is required for MP3/non-WAV local validation and recommended in general.
+- The current `beat_this` runtime path expects audio-loading dependencies such as `torch`, `torchcodec`, and `soundfile`; those are included in `requirements.txt`.
+- If `pip` cannot download packages from `files.pythonhosted.org`, verify DNS on the active network adapter/service the machine is actually using.
 
 Verify the install before running the pipeline:
 

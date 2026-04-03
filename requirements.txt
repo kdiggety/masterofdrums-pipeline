@@ -2,4 +2,7 @@ tqdm
 einops
 soxr
 rotary-embedding-torch
+torch
+torchcodec
+soundfile
 beat_this @ https://github.com/CPJKU/beat_this/archive/main.zip
