@@ -57,7 +57,44 @@
         "downbeatOffsetSeconds": { "type": ["number", "null"], "minimum": 0 },
         "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
         "artifactURI": { "type": ["string", "null"], "format": "uri" },
-        "analyzerCommand": { "type": ["string", "null"], "minLength": 1 }
+        "analyzerCommand": { "type": ["string", "null"], "minLength": 1 },
+        "timingProvenance": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["backend", "timingSource", "fallbackUsed"],
+          "properties": {
+            "backend": { "type": "string", "minLength": 1 },
+            "timingSource": { "type": "string", "enum": ["primary", "fallback"] },
+            "backendCommand": { "type": ["string", "null"], "minLength": 1 },
+            "selectedBackend": { "type": ["string", "null"], "minLength": 1 },
+            "fallbackUsed": { "type": "boolean" },
+            "fallbackSummary": {
+              "type": ["object", "null"],
+              "additionalProperties": false,
+              "required": ["reason", "category"],
+              "properties": {
+                "reason": { "type": "string", "minLength": 1 },
+                "category": { "type": "string", "enum": ["configuration", "policy", "validation", "execution"] },
+                "errorSummary": { "type": ["string", "null"], "minLength": 1 }
+              }
+            }
+          }
+        },
+        "runtimeBackend": { "type": ["string", "null"], "minLength": 1 },
+        "runtimeBackendCommand": { "type": ["string", "null"], "minLength": 1 },
+        "runtimeSelectedBackend": { "type": ["string", "null"], "minLength": 1 },
+        "runtimeFallbackUsed": { "type": ["boolean", "null"] },
+        "runtimeFallbackReason": { "type": ["string", "null"], "minLength": 1 },
+        "runtimeFallbackErrorSummary": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["reason", "category"],
+          "properties": {
+            "reason": { "type": "string", "minLength": 1 },
+            "category": { "type": "string", "enum": ["configuration", "policy", "validation", "execution"] },
+            "errorSummary": { "type": ["string", "null"], "minLength": 1 }
+          }
+        }
       }
     },
     "segments": {

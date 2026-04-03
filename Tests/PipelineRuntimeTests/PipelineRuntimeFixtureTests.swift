@@ -669,6 +669,10 @@ output_path.write_text(json.dumps({
         let analyzeJob = try XCTUnwrap(jobs.first(where: { $0.type == .audioAnalyze }))
         let analysisResult = try decode(AudioAnalysisContract.self, from: analyzeJob.resultJSON)
         XCTAssertEqual(analysisResult.analysis.estimatedTempoBPM, 98.0)
+        XCTAssertEqual(analysisResult.analysis.timingProvenance?.timingSource, "fallback")
+        XCTAssertEqual(analysisResult.analysis.runtimeFallbackUsed, true)
+        XCTAssertEqual(analysisResult.analysis.runtimeFallbackErrorSummary?.category, "execution")
+        XCTAssertNotNil(analysisResult.analysis.runtimeFallbackErrorSummary?.errorSummary)
         XCTAssertTrue(analysisResult.warnings.contains("fallback-script"))
         XCTAssertTrue(analysisResult.warnings.contains(where: { $0.contains("beat_this unavailable/failed; used fallback backend") }))
     }

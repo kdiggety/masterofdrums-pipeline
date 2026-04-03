@@ -15,6 +15,7 @@ public enum PipelineCLICommand: Equatable {
     case worker(stopAfterIdlePolls: Int?)
     case enqueueAudioIngest(sourceURI: String, sourceType: String, requestedBy: String, idempotencyKey: String?)
     case validateAudioAnalyzer(sourceURI: String, sourceType: String, requestedBy: String, outputPath: String?)
+    case doctorAudioAnalyzer
     case listJobs(status: PipelineJobStatus?)
     case showJob(id: String)
     case listEvents(workflowID: String?, jobID: String?, limit: Int)
@@ -86,6 +87,13 @@ public struct PipelineRuntime {
         case .validateAudioAnalyzer(let sourceURI, let sourceType, let requestedBy, let outputPath):
             let analysis = try validateAudioAnalyzer(sourceURI: sourceURI, sourceType: sourceType, requestedBy: requestedBy, outputPath: outputPath)
             print(analysis.toJSONString())
+
+        case .doctorAudioAnalyzer:
+            let report = AnalyzerDoctor().run()
+            print(report.renderText())
+            if report.hasFailures {
+                throw PipelineRuntimeError.audioAnalyzerDoctorFailed("Analyzer preflight failed; see doctor output above.")
+            }
 
         case .listJobs(let status):
             if database.configuration.autoMigrate {
@@ -418,7 +426,14 @@ public struct PipelineRuntime {
                 "schema_version": AnySendable(analysis.schemaVersion),
                 "segment_count": AnySendable(analysis.analysis.estimatedSegmentCount),
                 "duration_seconds": AnySendable(analysis.analysis.durationSeconds ?? 0),
-                "analyzer_command": AnySendable(analyzer.commandTemplate)
+                "analyzer_command": AnySendable(analyzer.commandTemplate),
+                "timing_backend": AnySendable(analysis.analysis.timingProvenance?.backend),
+                "timing_source": AnySendable(analysis.analysis.timingProvenance?.timingSource),
+                "timing_backend_command": AnySendable(analysis.analysis.timingProvenance?.backendCommand),
+                "fallback_used": AnySendable(analysis.analysis.timingProvenance?.fallbackUsed),
+                "fallback_reason": AnySendable(analysis.analysis.timingProvenance?.fallbackSummary?.reason),
+                "fallback_category": AnySendable(analysis.analysis.timingProvenance?.fallbackSummary?.category),
+                "fallback_error_summary": AnySendable(analysis.analysis.timingProvenance?.fallbackSummary?.errorSummary)
             ],
             createdAt: now
         )
@@ -785,10 +800,31 @@ public struct PipelineRuntime {
     }
 
     private static func encodeJSONObject(_ values: [String: AnySendable]) -> String? {
-        let rawValues = values.mapValues(\.value)
+        let rawValues = values.reduce(into: [String: Any]()) { partialResult, item in
+            guard let normalized = normalizeJSONObjectValue(item.value.value) else { return }
+            partialResult[item.key] = normalized
+        }
         guard JSONSerialization.isValidJSONObject(rawValues) else { return nil }
         guard let data = try? JSONSerialization.data(withJSONObject: rawValues, options: [.sortedKeys]) else { return nil }
         return String(decoding: data, as: UTF8.self)
+    }
+
+    private static func normalizeJSONObjectValue(_ value: Any) -> Any? {
+        let mirror = Mirror(reflecting: value)
+        if mirror.displayStyle == .optional {
+            guard let child = mirror.children.first else { return nil }
+            return normalizeJSONObjectValue(child.value)
+        }
+        if let array = value as? [AnySendable] {
+            return array.compactMap { normalizeJSONObjectValue($0.value) }
+        }
+        if let dictionary = value as? [String: AnySendable] {
+            return dictionary.reduce(into: [String: Any]()) { partialResult, item in
+                guard let normalized = normalizeJSONObjectValue(item.value.value) else { return }
+                partialResult[item.key] = normalized
+            }
+        }
+        return value
     }
 
     private static func sampleRate(from formatDescriptions: [Any]?) -> Double? {
@@ -921,6 +957,7 @@ public struct PipelineRuntime {
       worker [--stop-after-idle-polls <count>]
       enqueue-audio-ingest --source-uri <uri> [--source-type file] [--requested-by cli] [--idempotency-key <key>]
       validate-audio-analyzer --source-uri <uri> [--source-type file] [--requested-by cli] [--output-path <path>]
+      doctor-audio-analyzer
       list-jobs [--status queued|running|failed|succeeded|cancelled]
       show-job <job-id>
       list-events [--workflow-id <workflow-id>] [--job-id <job-id>] [--limit <count>]
@@ -965,6 +1002,8 @@ public enum PipelineCLIParser {
                 requestedBy: value(for: "--requested-by", in: args) ?? "cli",
                 outputPath: value(for: "--output-path", in: args)
             )
+        case "doctor-audio-analyzer":
+            return .doctorAudioAnalyzer
         case "list-jobs":
             return .listJobs(status: value(for: "--status", in: args).flatMap(PipelineJobStatus.init(rawValue:)))
         case "show-job":
@@ -1003,6 +1042,7 @@ public enum PipelineRuntimeError: LocalizedError {
     case audioAnalyzerNotConfigured
     case audioAnalyzerTimedOut(TimeInterval)
     case audioAnalyzerFailed(String)
+    case audioAnalyzerDoctorFailed(String)
 
     public var errorDescription: String? {
         switch self {
@@ -1016,6 +1056,8 @@ public enum PipelineRuntimeError: LocalizedError {
             return "Audio analyzer timed out after \(timeout) seconds"
         case .audioAnalyzerFailed(let message):
             return "Audio analyzer failed: \(message)"
+        case .audioAnalyzerDoctorFailed(let message):
+            return message
         }
     }
 }
@@ -1090,27 +1132,240 @@ public struct AudioAnalyzerConfiguration: Sendable {
         return environment
     }
 
-    private static func shellEscape(_ value: String) -> String {
+    fileprivate static func shellEscape(_ value: String) -> String {
         "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
-    private static func liveEnvironment() -> [String: String] {
+    fileprivate static func liveEnvironment() -> [String: String] {
         [
             "PIPELINE_AUDIO_ANALYZER_COMMAND": getenvString("PIPELINE_AUDIO_ANALYZER_COMMAND"),
             "PIPELINE_AUDIO_ANALYZER_TIMEOUT_SECONDS": getenvString("PIPELINE_AUDIO_ANALYZER_TIMEOUT_SECONDS"),
-            "PIPELINE_AUDIO_ANALYZER_STDOUT_JSON": getenvString("PIPELINE_AUDIO_ANALYZER_STDOUT_JSON")
+            "PIPELINE_AUDIO_ANALYZER_STDOUT_JSON": getenvString("PIPELINE_AUDIO_ANALYZER_STDOUT_JSON"),
+            "PIPELINE_ANALYZER_BACKEND_COMMAND": getenvString("PIPELINE_ANALYZER_BACKEND_COMMAND"),
+            "PIPELINE_ANALYZER_PRIMARY_BACKEND_COMMAND": getenvString("PIPELINE_ANALYZER_PRIMARY_BACKEND_COMMAND"),
+            "PIPELINE_ANALYZER_FALLBACK_BACKEND_COMMAND": getenvString("PIPELINE_ANALYZER_FALLBACK_BACKEND_COMMAND"),
+            "PIPELINE_ANALYZER_FALLBACK_POLICY": getenvString("PIPELINE_ANALYZER_FALLBACK_POLICY"),
+            "PIPELINE_ANALYZER_VALIDATION_MODE": getenvString("PIPELINE_ANALYZER_VALIDATION_MODE")
         ].compactMapValues { $0 }
     }
 
-    private static func getenvString(_ key: String) -> String? {
+    fileprivate static func getenvString(_ key: String) -> String? {
         guard let raw = getenv(key) else { return nil }
         return String(cString: raw)
     }
 
-    private static func boolFlag(_ value: String?) -> Bool {
+    fileprivate static func boolFlag(_ value: String?) -> Bool {
         guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() else { return false }
         return ["1", "true", "yes", "on"].contains(value)
     }
+}
+
+public struct AnalyzerDoctor {
+    public init() {}
+
+    public func run() -> AnalyzerDoctorReport {
+        let environment = AudioAnalyzerConfiguration.liveEnvironment()
+        let workingDirectory = FileManager.default.currentDirectoryPath
+        let venvPath = URL(fileURLWithPath: workingDirectory).appendingPathComponent(".venv", isDirectory: true).path
+        let pythonPath = URL(fileURLWithPath: venvPath).appendingPathComponent("bin/python").path
+        let commandRunner = AnalyzerDoctorCommandRunner()
+        var checks: [AnalyzerDoctorCheck] = []
+
+        let venvExists = FileManager.default.fileExists(atPath: venvPath)
+        let pythonExists = FileManager.default.isExecutableFile(atPath: pythonPath)
+        checks.append(
+            AnalyzerDoctorCheck(
+                name: "repo-local virtualenv",
+                status: venvExists && pythonExists ? .pass : .fail,
+                detail: venvExists && pythonExists ? "found \(venvPath)" : "missing repo-local .venv or executable .venv/bin/python",
+                remediation: venvExists && pythonExists ? nil : "Run: python3 -m venv .venv && ./.venv/bin/python -m pip install --upgrade pip && ./.venv/bin/python -m pip install -r requirements.txt"
+            )
+        )
+
+        let ffmpegResult = commandRunner.run(["/usr/bin/env", "bash", "-lc", "command -v ffmpeg >/dev/null 2>&1 && ffmpeg -version | head -n 1"])
+        checks.append(
+            AnalyzerDoctorCheck(
+                name: "ffmpeg",
+                status: ffmpegResult.exitCode == 0 ? .pass : .fail,
+                detail: ffmpegResult.exitCode == 0 ? (ffmpegResult.stdout.split(separator: "\n").first.map(String.init) ?? "ffmpeg found") : "ffmpeg not found on PATH",
+                remediation: ffmpegResult.exitCode == 0 ? nil : "Install ffmpeg (for example: brew install ffmpeg) and re-run doctor-audio-analyzer."
+            )
+        )
+
+        let importModules = ["beat_this", "torch", "torchcodec", "soundfile"]
+        if pythonExists {
+            for module in importModules {
+                let result = commandRunner.run([pythonPath, "-c", "import \(module)"])
+                checks.append(
+                    AnalyzerDoctorCheck(
+                        name: "python import \(module)",
+                        status: result.exitCode == 0 ? .pass : .fail,
+                        detail: result.exitCode == 0 ? "import succeeded via \(pythonPath)" : (result.stderr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "import failed" : result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)),
+                        remediation: result.exitCode == 0 ? nil : "Install analyzer deps into the repo venv: ./.venv/bin/python -m pip install -r requirements.txt"
+                    )
+                )
+            }
+        } else {
+            for module in importModules {
+                checks.append(
+                    AnalyzerDoctorCheck(
+                        name: "python import \(module)",
+                        status: .fail,
+                        detail: "skipped because .venv/bin/python is unavailable",
+                        remediation: "Create the repo-local venv first: python3 -m venv .venv && ./.venv/bin/python -m pip install -r requirements.txt"
+                    )
+                )
+            }
+        }
+
+        checks.append(contentsOf: AnalyzerDoctor.evaluateEnvironment(environment))
+        return AnalyzerDoctorReport(workingDirectory: workingDirectory, checks: checks)
+    }
+
+    static func evaluateEnvironment(_ environment: [String: String]) -> [AnalyzerDoctorCheck] {
+        let audioAnalyzerCommand = environment["PIPELINE_AUDIO_ANALYZER_COMMAND"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let legacyBackend = environment["PIPELINE_ANALYZER_BACKEND_COMMAND"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let primaryBackend = environment["PIPELINE_ANALYZER_PRIMARY_BACKEND_COMMAND"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let fallbackBackend = environment["PIPELINE_ANALYZER_FALLBACK_BACKEND_COMMAND"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let fallbackPolicy = environment["PIPELINE_ANALYZER_FALLBACK_POLICY"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let validationMode = environment["PIPELINE_ANALYZER_VALIDATION_MODE"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        var checks: [AnalyzerDoctorCheck] = []
+        let analyzerConfigured = !audioAnalyzerCommand.isEmpty && audioAnalyzerCommand.contains("{input}") && audioAnalyzerCommand.contains("{output}")
+        checks.append(
+            AnalyzerDoctorCheck(
+                name: "PIPELINE_AUDIO_ANALYZER_COMMAND",
+                status: analyzerConfigured ? .pass : .fail,
+                detail: analyzerConfigured ? audioAnalyzerCommand : "missing or missing {input}/{output} placeholders",
+                remediation: analyzerConfigured ? nil : "Export PIPELINE_AUDIO_ANALYZER_COMMAND, for example: export PIPELINE_AUDIO_ANALYZER_COMMAND=\"./.venv/bin/python ./scripts/analyzer-wrapper.py --input {input} --output {output}\""
+            )
+        )
+
+        let hasBackend = !legacyBackend.isEmpty || !primaryBackend.isEmpty
+        checks.append(
+            AnalyzerDoctorCheck(
+                name: "backend command configuration",
+                status: hasBackend ? .pass : .fail,
+                detail: !primaryBackend.isEmpty ? "primary backend configured" : (!legacyBackend.isEmpty ? "legacy backend configured" : "no backend command configured"),
+                remediation: hasBackend ? nil : "Set either PIPELINE_ANALYZER_PRIMARY_BACKEND_COMMAND for the recommended wrapper flow, or PIPELINE_ANALYZER_BACKEND_COMMAND for legacy single-backend mode."
+            )
+        )
+
+        if !primaryBackend.isEmpty {
+            checks.append(
+                AnalyzerDoctorCheck(
+                    name: "PIPELINE_ANALYZER_FALLBACK_BACKEND_COMMAND",
+                    status: fallbackBackend.isEmpty ? .warn : .pass,
+                    detail: fallbackBackend.isEmpty ? "not set; wrapper can still run, but you lose the safety fallback" : fallbackBackend,
+                    remediation: fallbackBackend.isEmpty ? "Recommended: export PIPELINE_ANALYZER_FALLBACK_BACKEND_COMMAND=\"./.venv/bin/python ./scripts/backend-analyzer.py --input {input} --output {output}\"" : nil
+                )
+            )
+            checks.append(
+                AnalyzerDoctorCheck(
+                    name: "PIPELINE_ANALYZER_FALLBACK_POLICY",
+                    status: fallbackPolicy.isEmpty ? .warn : .pass,
+                    detail: fallbackPolicy.isEmpty ? "not set" : fallbackPolicy,
+                    remediation: fallbackPolicy.isEmpty ? "Recommended: export PIPELINE_ANALYZER_FALLBACK_POLICY=on-error-or-invalid" : nil
+                )
+            )
+            checks.append(
+                AnalyzerDoctorCheck(
+                    name: "PIPELINE_ANALYZER_VALIDATION_MODE",
+                    status: validationMode.isEmpty ? .warn : .pass,
+                    detail: validationMode.isEmpty ? "not set" : validationMode,
+                    remediation: validationMode.isEmpty ? "Recommended: export PIPELINE_ANALYZER_VALIDATION_MODE=require-timing" : nil
+                )
+            )
+        }
+
+        return checks
+    }
+}
+
+public struct AnalyzerDoctorReport {
+    public let workingDirectory: String
+    public let checks: [AnalyzerDoctorCheck]
+
+    public var hasFailures: Bool {
+        checks.contains { $0.status == .fail }
+    }
+
+    public var hasWarnings: Bool {
+        checks.contains { $0.status == .warn }
+    }
+
+    public func renderText() -> String {
+        var lines = ["[pipeline] analyzer preflight", "[pipeline] cwd: \(workingDirectory)"]
+        for check in checks {
+            lines.append("[\(check.status.symbol)] \(check.name): \(check.detail)")
+            if let remediation = check.remediation, check.status != .pass {
+                lines.append("    fix: \(remediation)")
+            }
+        }
+        let summary: String
+        if hasFailures {
+            summary = "FAIL"
+        } else if hasWarnings {
+            summary = "WARN"
+        } else {
+            summary = "PASS"
+        }
+        lines.append("[pipeline] summary: \(summary) (pass=\(checks.filter { $0.status == .pass }.count) warn=\(checks.filter { $0.status == .warn }.count) fail=\(checks.filter { $0.status == .fail }.count))")
+        return lines.joined(separator: "\n")
+    }
+}
+
+public struct AnalyzerDoctorCheck: Equatable {
+    public let name: String
+    public let status: AnalyzerDoctorStatus
+    public let detail: String
+    public let remediation: String?
+}
+
+public enum AnalyzerDoctorStatus: String {
+    case pass
+    case warn
+    case fail
+
+    var symbol: String {
+        switch self {
+        case .pass: return "PASS"
+        case .warn: return "WARN"
+        case .fail: return "FAIL"
+        }
+    }
+}
+
+public struct AnalyzerDoctorCommandRunner {
+    public init() {}
+
+    public func run(_ command: [String]) -> AnalyzerDoctorCommandResult {
+        guard let executable = command.first else {
+            return AnalyzerDoctorCommandResult(exitCode: 1, stdout: "", stderr: "missing executable")
+        }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = Array(command.dropFirst())
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+        do {
+            try process.run()
+            process.waitUntilExit()
+            let out = String(decoding: stdout.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            let err = String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            return AnalyzerDoctorCommandResult(exitCode: Int(process.terminationStatus), stdout: out, stderr: err)
+        } catch {
+            return AnalyzerDoctorCommandResult(exitCode: 1, stdout: "", stderr: error.localizedDescription)
+        }
+    }
+}
+
+public struct AnalyzerDoctorCommandResult {
+    public let exitCode: Int
+    public let stdout: String
+    public let stderr: String
 }
 
 extension JSONDecoder {
