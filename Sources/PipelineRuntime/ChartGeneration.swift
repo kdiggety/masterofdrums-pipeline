@@ -16,10 +16,12 @@ enum ChartGenerator {
     static func generate(from analysis: AudioAnalysisContract, generatedAt: Date, normalizedAnalysisArtifactURI: String) -> ChartGenerationOutput {
         let timeSignature = TimeSignature(numerator: 4, denominator: 4)
         let ticksPerBeat = 480
+        let analyzerBeatStarts = extractBeatStarts(from: analysis.rawAnalyzerOutput)
+        let usedAnalyzerTiming = !(analyzerBeatStarts?.isEmpty ?? true)
         let beatGrid = makeBeatGrid(from: analysis, timeSignature: timeSignature)
         let drumEventResult = makeDrumEvents(from: analysis, beatGrid: beatGrid)
         let measures = makeMeasures(from: beatGrid, timeSignature: timeSignature)
-        let warnings = combinedWarnings(for: analysis, beatGrid: beatGrid, drumEventResult: drumEventResult)
+        let warnings = combinedWarnings(for: analysis, beatGrid: beatGrid, drumEventResult: drumEventResult, usedAnalyzerTiming: usedAnalyzerTiming)
         let detectedSubdivisionCount = inferredSubdivisionsPerBeat(from: beatGrid)
         let usedAnalyzerEvents = drumEventResult.events.contains(where: { !($0.sourceLabel ?? "").hasPrefix("heuristic_") })
 
@@ -46,8 +48,10 @@ enum ChartGenerator {
             drumEventDiagnostics: drumEventResult.diagnostics,
             warnings: warnings,
             note: usedAnalyzerEvents
-                ? "Normalized analysis generated from analyzer timing/event output with \(detectedSubdivisionCount)x subdivision anchors per beat."
-                : "Heuristic normalization generated from coarse analysis summary with \(detectedSubdivisionCount)x fallback subdivision anchors per beat."
+                ? "Normalized analysis generated from analyzer-provided timing and analyzer drum-event candidates with \(detectedSubdivisionCount)x subdivision anchors per beat."
+                : usedAnalyzerTiming
+                    ? "Normalized analysis generated from analyzer-provided timing, while drum events came from heuristicDrumEvents fallback shaping, with \(detectedSubdivisionCount)x subdivision anchors per beat."
+                    : "Heuristic normalization generated from coarse analysis summary with \(detectedSubdivisionCount)x fallback subdivision anchors per beat."
         )
 
         let notes = makeChartNotes(from: normalized.drumEvents, ticksPerBeat: ticksPerBeat, beatGrid: beatGrid)
@@ -71,8 +75,10 @@ enum ChartGenerator {
             drumEventDiagnostics: drumEventResult.diagnostics,
             warnings: warnings,
             note: usedAnalyzerEvents
-                ? "Base chart generated from analyzer timing and mapped drum-event candidates using \(detectedSubdivisionCount)x quantization."
-                : "Heuristic base chart intended as a deterministic playable scaffold using \(detectedSubdivisionCount)x fallback quantization."
+                ? "Base chart generated from analyzer-provided timing and mapped analyzer drum-event candidates using \(detectedSubdivisionCount)x quantization."
+                : usedAnalyzerTiming
+                    ? "Base chart generated from analyzer-provided timing, while note placement came from heuristicDrumEvents fallback output, using \(detectedSubdivisionCount)x quantization."
+                    : "Heuristic base chart intended as a deterministic playable scaffold using \(detectedSubdivisionCount)x fallback quantization."
         )
 
         return ChartGenerationOutput(normalized: normalized, baseChart: baseChart)
@@ -85,7 +91,7 @@ enum ChartGenerator {
         let laneMappingsUsed: Set<DrumLane>
     }
 
-    private static func combinedWarnings(for analysis: AudioAnalysisContract, beatGrid: [BeatGridEvent], drumEventResult: DrumEventResult) -> [String] {
+    private static func combinedWarnings(for analysis: AudioAnalysisContract, beatGrid: [BeatGridEvent], drumEventResult: DrumEventResult, usedAnalyzerTiming: Bool) -> [String] {
         var warnings = analysis.warnings
         if analysis.analysis.estimatedTempoBPM == nil {
             warnings.append("No analyzer tempo found; fallback 120 BPM grid used for chart-generation staging.")
@@ -97,7 +103,11 @@ enum ChartGenerator {
             warnings.append("No usable beat grid anchors were available; chart timing may be incomplete.")
         }
         if drumEventResult.diagnostics.usedFallback {
-            warnings.append("Analyzer did not provide usable drum-event candidates; emitted heuristic playable groove instead.")
+            if usedAnalyzerTiming {
+                warnings.append("Analyzer timing was preserved, but analyzer drum-event candidates were unusable; heuristicDrumEvents supplied the playable drum events instead.")
+            } else {
+                warnings.append("Analyzer did not provide usable timing or drum-event candidates; emitted heuristic playable groove instead.")
+            }
         }
         if drumEventResult.diagnostics.droppedMissingOnsetCount > 0 {
             warnings.append("Dropped \(drumEventResult.diagnostics.droppedMissingOnsetCount) drum-event candidates without onset timing.")
@@ -113,6 +123,12 @@ enum ChartGenerator {
         }
         if drumEventResult.diagnostics.rawCandidateCount > 0, drumEventResult.diagnostics.mappedCandidateCount < drumEventResult.diagnostics.rawCandidateCount {
             warnings.append("Mapped \(drumEventResult.diagnostics.mappedCandidateCount) of \(drumEventResult.diagnostics.rawCandidateCount) analyzer drum-event candidates into gameplay lanes.")
+        }
+        if usedAnalyzerTiming || drumEventResult.diagnostics.rawCandidateCount > 0 {
+            warnings.append("Timing/events split: timing source=\(usedAnalyzerTiming ? "analyzer" : "heuristic"); drum-event source=\(drumEventResult.diagnostics.usedFallback ? "heuristicDrumEvents" : "analyzer").")
+        }
+        if drumEventResult.diagnostics.rawCandidateCount > 0 {
+            warnings.append("Analyzer drum-event diagnostics: raw=\(drumEventResult.diagnostics.rawCandidateCount) mapped=\(drumEventResult.diagnostics.mappedCandidateCount) post-shaping=\(drumEventResult.diagnostics.postShapingEventCount).")
         }
         if let maxError = drumEventResult.maxQuantizationErrorSeconds, maxError > 0.05 {
             warnings.append(String(format: "Quantization drift reached %.3f seconds at the furthest mapped drum event.", maxError))
@@ -526,18 +542,6 @@ enum ChartGenerator {
         for anchor in beatGrid {
             switch anchor.subdivisionInBeat {
             case 0:
-                events.append(
-                    DetectedDrumEvent(
-                        onsetSeconds: anchor.startSeconds,
-                        onsetBeatIndex: anchor.beatIndex,
-                        onsetSubdivisionIndex: anchor.subdivisionIndex,
-                        lane: .hihatClosed,
-                        velocity: anchor.isDownbeat ? 0.7 : 0.62,
-                        sourceLabel: "heuristic_backbeat_hat",
-                        confidence: confidence
-                    )
-                )
-
                 let mainLane: DrumLane
                 let velocity: Double
                 switch anchor.beatInBar {
@@ -551,8 +555,8 @@ enum ChartGenerator {
                     mainLane = .kick
                     velocity = 0.82
                 default:
-                    mainLane = .hihatClosed
-                    velocity = 0.6
+                    mainLane = .kick
+                    velocity = 0.76
                 }
 
                 events.append(
@@ -566,14 +570,29 @@ enum ChartGenerator {
                         confidence: confidence
                     )
                 )
+
+                if anchor.beatInBar == 1 || anchor.beatInBar == 3 {
+                    events.append(
+                        DetectedDrumEvent(
+                            onsetSeconds: anchor.startSeconds,
+                            onsetBeatIndex: anchor.beatIndex,
+                            onsetSubdivisionIndex: anchor.subdivisionIndex,
+                            lane: .hihatClosed,
+                            velocity: anchor.isDownbeat ? 0.68 : 0.58,
+                            sourceLabel: "heuristic_backbeat_hat",
+                            confidence: confidence
+                        )
+                    )
+                }
             case 2:
+                guard anchor.beatInBar == 3 else { continue }
                 events.append(
                     DetectedDrumEvent(
                         onsetSeconds: anchor.startSeconds,
                         onsetBeatIndex: anchor.beatIndex,
                         onsetSubdivisionIndex: anchor.subdivisionIndex,
                         lane: .hihatClosed,
-                        velocity: 0.55,
+                        velocity: 0.5,
                         sourceLabel: "heuristic_hat_offbeat",
                         confidence: confidence
                     )

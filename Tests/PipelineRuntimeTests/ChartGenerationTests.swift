@@ -98,8 +98,9 @@ final class ChartGenerationTests: XCTestCase {
         XCTAssertEqual(generated.baseChart.drumEventDiagnostics?.rawCandidateCount, 3)
         XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("without onset timing") }))
         XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("unmapped lanes") }))
+        XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("Timing/events split: timing source=analyzer; drum-event source=analyzer") }))
         XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("Mapped 1 of 3 analyzer drum-event candidates") }))
-        XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("raw=3 mapped=1 post-shaping=1") }))
+        XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("Analyzer drum-event diagnostics: raw=3 mapped=1 post-shaping=1") }))
     }
 
     func testGenerateDeduplicatesAnalyzerEventsThatCollapseIntoSameQuantizedLaneSlot() throws {
@@ -126,8 +127,9 @@ final class ChartGenerationTests: XCTestCase {
         XCTAssertEqual(generated.normalized.drumEventDiagnostics?.postShapingEventCount, 2)
         XCTAssertEqual(generated.normalized.drumEventDiagnostics?.deduplicatedCandidateCount, 1)
         XCTAssertEqual(generated.normalized.drumEventDiagnostics?.shapingReductionCount, 1)
+        XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("Timing/events split: timing source=analyzer; drum-event source=analyzer") }))
         XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("Collapsed 1 analyzer drum-event duplicates") }))
-        XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("raw=3 mapped=3 post-shaping=2") }))
+        XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("Analyzer drum-event diagnostics: raw=3 mapped=3 post-shaping=2") }))
     }
 
 
@@ -402,6 +404,30 @@ final class ChartGenerationTests: XCTestCase {
         XCTAssertEqual(generated.baseChart.chart.notes.map(\.lane), [.kick, .crash, .hihatClosed])
     }
 
+    func testGenerateUsesSparserHeuristicGrooveWhenAnalyzerTimingHasNoDrumEvents() throws {
+        let analysis = makeAnalysis(raw: [
+            "beats": [0.0, 0.5, 1.0, 1.5, 2.0]
+        ], duration: 2.0)
+
+        let generated = ChartGenerator.generate(
+            from: analysis,
+            generatedAt: Date(timeIntervalSince1970: 0),
+            normalizedAnalysisArtifactURI: "file:///tmp/normalized.json"
+        )
+
+        XCTAssertEqual(generated.normalized.summary.beatCount, 5)
+        XCTAssertEqual(generated.normalized.drumEvents.filter { $0.lane == .kick || $0.lane == .snare }.map(\.lane), [.kick, .snare, .kick, .snare])
+        XCTAssertEqual(generated.normalized.drumEvents.filter { $0.lane == .hihatClosed }.map(\.onsetSubdivisionIndex), [0, 8, 10])
+        XCTAssertEqual(generated.normalized.drumEvents.filter { $0.lane == .hihatClosed }.count, 3)
+        XCTAssertEqual(generated.normalized.drumEvents.filter { $0.lane == .crash }.count, 1)
+        XCTAssertEqual(generated.baseChart.chart.notes.count, generated.normalized.drumEvents.count)
+        XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("Analyzer timing was preserved, but analyzer drum-event candidates were unusable; heuristicDrumEvents supplied the playable drum events instead.") }))
+        XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("Timing/events split: timing source=analyzer; drum-event source=heuristicDrumEvents") }))
+        XCTAssertTrue(generated.normalized.note?.contains("analyzer-provided timing") == true)
+        XCTAssertTrue(generated.normalized.note?.contains("heuristicDrumEvents fallback shaping") == true)
+        XCTAssertTrue(generated.baseChart.note?.contains("heuristicDrumEvents fallback output") == true)
+    }
+
     func testGenerateFallsBackToDeterministicQuarterNoteGridWithoutAnalyzerEvents() throws {
         let analysis = makeAnalysis(raw: [:], tempo: nil, duration: 1.0)
 
@@ -416,7 +442,7 @@ final class ChartGenerationTests: XCTestCase {
         XCTAssertEqual(generated.normalized.beatGrid[2].subdivisionInBeat, 2)
         XCTAssertEqual(generated.baseChart.chart.notes.first?.tick, 0)
         XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("fallback 120 BPM") }))
-        XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("heuristic playable groove") }))
+        XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("Analyzer did not provide usable timing or drum-event candidates") }))
         XCTAssertTrue(generated.normalized.note?.contains("4x fallback subdivision") == true)
     }
 
