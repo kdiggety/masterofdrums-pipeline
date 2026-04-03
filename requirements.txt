@@ -1,0 +1,5 @@
+tqdm
+einops
+soxr
+rotary-embedding-torch
+beat_this @ https://github.com/CPJKU/beat_this/archive/main.zip

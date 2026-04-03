@@ -167,6 +167,8 @@ Example flow:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
+python3 -m pip install --upgrade pip
+python3 -m pip install -r requirements.txt
 
 export PIPELINE_AUDIO_ANALYZER_COMMAND="./.venv/bin/python ./scripts/analyzer-wrapper.py --input {input} --output {output}"
 
@@ -225,11 +227,11 @@ Minimal Python-side bootstrap for the real primary path:
 python3 -m venv .venv
 source .venv/bin/activate
 python3 -m pip install --upgrade pip
-# install a PyTorch build that matches your platform from https://pytorch.org/get-started/locally/
-python3 -m pip install tqdm einops soxr rotary-embedding-torch
-python3 -m pip install https://github.com/CPJKU/beat_this/archive/main.zip
+python3 -m pip install -r requirements.txt
 # ffmpeg is recommended for non-WAV input decoding
 ```
+
+The checked-in [`requirements.txt`](/Users/klewisjr/Development/MacOS/masterofdrums-pipeline/requirements.txt) captures the current repo-local analyzer stack so future Mac worker setup does not depend on copying package names out of the README. If you need a platform-specific PyTorch install later, add it explicitly on top of this base requirements file.
 
 Verify the install before running the pipeline:
 
