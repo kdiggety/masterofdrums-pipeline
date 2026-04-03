@@ -243,6 +243,14 @@ When `--bootstrap-analyzer` is enabled, setup now also generates:
 
 That keeps the Mac setup path closer to the repo's checked-in analyzer contract instead of relying on copy/pasted README commands.
 
+For a lightweight regression check around setup/bootstrap itself, run:
+
+```bash
+scripts/setup-smoke.sh
+```
+
+That harness uses an isolated temp install root plus a stubbed `swift run` so it can verify generated helper scripts, seeded analyzer env defaults, and basic rerun/idempotency behavior without requiring a real release build.
+
 ## beat_this Primary Backend Bootstrap
 
 The intended analyzer stack is now:
