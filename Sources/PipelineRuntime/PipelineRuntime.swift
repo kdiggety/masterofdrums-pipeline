@@ -509,7 +509,14 @@ public struct PipelineRuntime {
                 downbeatOffsetSeconds: analysis.analysis.downbeatOffsetSeconds,
                 confidence: analysis.analysis.confidence,
                 artifactURI: outputURL.absoluteString,
-                analyzerCommand: analyzer.commandTemplate
+                analyzerCommand: analyzer.commandTemplate,
+                timingProvenance: analysis.analysis.timingProvenance,
+                runtimeBackend: analysis.analysis.runtimeBackend,
+                runtimeBackendCommand: analysis.analysis.runtimeBackendCommand,
+                runtimeSelectedBackend: analysis.analysis.runtimeSelectedBackend,
+                runtimeFallbackUsed: analysis.analysis.runtimeFallbackUsed,
+                runtimeFallbackReason: analysis.analysis.runtimeFallbackReason,
+                runtimeFallbackErrorSummary: analysis.analysis.runtimeFallbackErrorSummary
             ),
             segments: analysis.segments,
             warnings: analysis.warnings,

@@ -190,6 +190,36 @@ public struct AudioAnalysisSummary: Codable, Sendable {
 
 extension AudioAnalysisSummary: JSONStringEncodable {}
 
+public extension AudioAnalysisSummary {
+    var operatorSummaryLine: String {
+        var parts: [String] = []
+        if let durationSeconds {
+            parts.append("duration=\(Self.format(durationSeconds))s")
+        }
+        if let estimatedTempoBPM {
+            parts.append("tempo≈\(Self.format(estimatedTempoBPM)) bpm")
+        }
+        parts.append("segments=\(estimatedSegmentCount)")
+        parts.append("tracks=\(audioTrackCount)")
+        if let confidence {
+            parts.append("confidence=\(Self.format(confidence))")
+        }
+        if let provenance = timingProvenance {
+            parts.append("timing=\(provenance.operatorSummaryLine)")
+        } else if let runtimeSelectedBackend {
+            parts.append("backend=\(runtimeSelectedBackend)")
+        }
+        return parts.joined(separator: " | ")
+    }
+
+    private static func format(_ value: Double) -> String {
+        if value.rounded() == value {
+            return String(format: "%.0f", value)
+        }
+        return String(format: "%.2f", value)
+    }
+}
+
 public struct AudioAnalysisTimingProvenance: Codable, Sendable {
     public let backend: String
     public let timingSource: String
@@ -224,6 +254,37 @@ public struct AudioAnalysisFallbackSummary: Codable, Sendable {
         self.reason = reason
         self.category = category
         self.errorSummary = errorSummary
+    }
+}
+
+public extension AudioAnalysisTimingProvenance {
+    var operatorSummaryLine: String {
+        var parts = ["\(backend) via \(timingSource)"]
+        if let selectedBackend {
+            parts.append("selected=\(selectedBackend)")
+        }
+        if fallbackUsed {
+            if let fallbackSummary {
+                parts.append("fallback=\(fallbackSummary.operatorSummaryLine)")
+            } else {
+                parts.append("fallback=yes")
+            }
+        } else {
+            parts.append("fallback=no")
+        }
+        return parts.joined(separator: ", ")
+    }
+}
+
+public extension AudioAnalysisFallbackSummary {
+    var operatorSummaryLine: String {
+        var parts = [category]
+        if let errorSummary, !errorSummary.isEmpty {
+            parts.append(errorSummary)
+        } else {
+            parts.append(reason)
+        }
+        return parts.joined(separator: ": ")
     }
 }
 
