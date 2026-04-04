@@ -37,9 +37,13 @@ MAX_EVENT_GAP_SECONDS = 1.5
 DEFAULT_TEMPO_BPM = 120.0
 FFMPEG_DECODE_TIMEOUT_SECONDS = 20
 KICK_RECLASSIFY_LIMIT = 0.32
-SNARE_CONFIDENCE_FLOOR = 0.6
-HIHAT_CONFIDENCE_FLOOR = 0.6
+SNARE_CONFIDENCE_FLOOR = 0.58
+HIHAT_CONFIDENCE_FLOOR = 0.62
+ISOLATED_HIHAT_CONFIDENCE_FLOOR = 0.78
 MIN_SAME_LANE_GAP_SECONDS = 0.18
+BEAT_ANCHOR_WINDOW = 0.16
+UPBEAT_WINDOW = 0.12
+KICK_PROMOTION_CONFIDENCE_FLOOR = 0.7
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -319,56 +323,93 @@ def build_segments(downbeats: list[float], duration: float) -> list[dict[str, An
     return segments
 
 
-def analyze_audio(input_path: str) -> dict[str, Any]:
-    samples, sample_rate, warnings = load_audio(input_path)
-    duration = len(samples) / sample_rate if sample_rate > 0 else 0.0
-    if not samples:
-        raise RuntimeError("decoded audio was empty")
+def nearest_beat_context(onset: float, beats: list[float]) -> tuple[int | None, float | None, float | None]:
+    if not beats:
+        return None, None, None
+    nearest_index = min(range(len(beats)), key=lambda index: abs(beats[index] - onset))
+    distance = onset - beats[nearest_index]
+    beat_interval = None
+    if len(beats) >= 2:
+        intervals = [right - left for left, right in zip(beats, beats[1:]) if right > left]
+        if intervals:
+            beat_interval = statistics.median(intervals)
+    return nearest_index, distance, beat_interval
 
-    rms = sliding_rms(samples, FRAME_SIZE, HOP_SIZE)
-    novelty = novelty_curve(rms)
-    onsets = detect_peaks(novelty, sample_rate)
-    tempo_bpm = infer_tempo_bpm(onsets)
-    beats = make_beat_grid(duration, onsets, tempo_bpm)
-    downbeats = beats[::4] if beats else []
 
-    classified_events: list[tuple[float, str, str, float]] = []
-    for onset in onsets:
-        classified_events.append((onset, *classify_event(samples, sample_rate, onset)))
+def shape_drum_events(classified_events: list[tuple[float, str, str, float]], beats: list[float]) -> tuple[list[dict[str, Any]], list[str]]:
+    warnings: list[str] = []
+    working = list(classified_events)
 
-    kick_candidates = [event for event in classified_events if event[1] == "kick"]
-    snare_candidates = [event for event in classified_events if event[1] == "snare"]
-    if not kick_candidates and snare_candidates:
-        reclassified: list[tuple[float, str, str, float]] = []
-        reclassified_count = max(1, int(round(len(snare_candidates) * KICK_RECLASSIFY_LIMIT)))
-        strongest = sorted(snare_candidates, key=lambda event: event[3], reverse=True)[:reclassified_count]
-        strongest_onsets = {round(event[0], 6) for event in strongest}
-        for onset, lane, label, confidence in classified_events:
-            if lane == "snare" and round(onset, 6) in strongest_onsets:
-                kick_confidence = min(0.92, max(0.52, confidence + 0.04))
-                reclassified.append((onset, "kick", "kick", kick_confidence))
-            else:
-                reclassified.append((onset, lane, label, confidence))
-        classified_events = reclassified
-        warnings.append("reclassified strongest snare-like hits as kick to avoid zero-kick output")
+    kick_candidates = [event for event in working if event[1] == "kick"]
+    snare_candidates = [event for event in working if event[1] == "snare"]
+    if not kick_candidates and snare_candidates and beats:
+        promoted_onsets: set[float] = set()
+        for onset, lane, label, confidence in sorted(snare_candidates, key=lambda event: event[3], reverse=True):
+            beat_index, distance, beat_interval = nearest_beat_context(onset, beats)
+            if beat_index is None or distance is None:
+                continue
+            anchor_window = (beat_interval or 0.5) * BEAT_ANCHOR_WINDOW
+            if abs(distance) > anchor_window:
+                continue
+            if beat_index % 2 != 0:
+                continue
+            if confidence < KICK_PROMOTION_CONFIDENCE_FLOOR:
+                continue
+            promoted_onsets.add(round(onset, 6))
+        if not promoted_onsets:
+            reclassified_count = max(1, int(round(len(snare_candidates) * KICK_RECLASSIFY_LIMIT)))
+            strongest = sorted(snare_candidates, key=lambda event: event[3], reverse=True)[:reclassified_count]
+            promoted_onsets = {round(event[0], 6) for event in strongest}
+        if promoted_onsets:
+            reclassified: list[tuple[float, str, str, float]] = []
+            for onset, lane, label, confidence in working:
+                if lane == "snare" and round(onset, 6) in promoted_onsets:
+                    kick_confidence = min(0.94, max(0.56, confidence + 0.05))
+                    reclassified.append((onset, "kick", "kick", kick_confidence))
+                else:
+                    reclassified.append((onset, lane, label, confidence))
+            working = reclassified
+            warnings.append("promoted beat-anchored snare-like hits to kick to preserve a playable backbone")
 
-    drum_events: list[dict[str, Any]] = []
     filtered_snare_count = 0
     filtered_hihat_count = 0
     deduped_count = 0
-    last_onset_by_lane: dict[str, float] = {}
-    for index, (onset, lane, label, confidence) in enumerate(classified_events):
+    shaped: list[tuple[float, str, str, float]] = []
+    for onset, lane, label, confidence in working:
+        beat_index, distance, beat_interval = nearest_beat_context(onset, beats)
         if lane == "snare" and confidence < SNARE_CONFIDENCE_FLOOR:
             filtered_snare_count += 1
             continue
-        if lane == "closed_hihat" and confidence < HIHAT_CONFIDENCE_FLOOR:
-            filtered_hihat_count += 1
-            continue
-        previous_onset = last_onset_by_lane.get(lane)
-        if previous_onset is not None and onset - previous_onset < MIN_SAME_LANE_GAP_SECONDS:
-            deduped_count += 1
-            continue
-        last_onset_by_lane[lane] = onset
+        if lane == "closed_hihat":
+            if confidence < HIHAT_CONFIDENCE_FLOOR:
+                filtered_hihat_count += 1
+                continue
+            anchor_window = (beat_interval or 0.5) * BEAT_ANCHOR_WINDOW
+            upbeat_window = (beat_interval or 0.5) * UPBEAT_WINDOW
+            near_anchor = distance is not None and abs(distance) <= anchor_window
+            near_upbeat = False
+            if beat_index is not None and beat_interval:
+                upbeat_distance = abs(onset - (beats[beat_index] + (beat_interval / 2.0)))
+                near_upbeat = upbeat_distance <= upbeat_window
+            if not near_anchor and not near_upbeat and confidence < ISOLATED_HIHAT_CONFIDENCE_FLOOR:
+                filtered_hihat_count += 1
+                continue
+        shaped.append((onset, lane, label, confidence))
+
+    deduped: list[tuple[float, str, str, float]] = []
+    for event in shaped:
+        onset, lane, label, confidence = event
+        if deduped:
+            previous_onset, previous_lane, _, previous_confidence = deduped[-1]
+            if lane == previous_lane and onset - previous_onset < MIN_SAME_LANE_GAP_SECONDS:
+                deduped_count += 1
+                if confidence > previous_confidence:
+                    deduped[-1] = event
+                continue
+        deduped.append(event)
+
+    drum_events: list[dict[str, Any]] = []
+    for index, (onset, lane, label, confidence) in enumerate(deduped):
         drum_events.append(
             {
                 "eventID": f"evt-{index + 1}",
@@ -386,7 +427,29 @@ def analyze_audio(input_path: str) -> dict[str, Any]:
     if filtered_hihat_count:
         warnings.append(f"filtered {filtered_hihat_count} low-confidence hi-hat candidates")
     if deduped_count:
-        warnings.append(f"deduped {deduped_count} near-duplicate same-lane hits")
+        warnings.append(f"deduped {deduped_count} near-duplicate same-lane hits while keeping the stronger candidate")
+    return drum_events, warnings
+
+
+def analyze_audio(input_path: str) -> dict[str, Any]:
+    samples, sample_rate, warnings = load_audio(input_path)
+    duration = len(samples) / sample_rate if sample_rate > 0 else 0.0
+    if not samples:
+        raise RuntimeError("decoded audio was empty")
+
+    rms = sliding_rms(samples, FRAME_SIZE, HOP_SIZE)
+    novelty = novelty_curve(rms)
+    onsets = detect_peaks(novelty, sample_rate)
+    tempo_bpm = infer_tempo_bpm(onsets)
+    beats = make_beat_grid(duration, onsets, tempo_bpm)
+    downbeats = beats[::4] if beats else []
+
+    classified_events: list[tuple[float, str, str, float]] = []
+    for onset in onsets:
+        classified_events.append((onset, *classify_event(samples, sample_rate, onset)))
+
+    drum_events, shaping_warnings = shape_drum_events(classified_events, beats)
+    warnings.extend(shaping_warnings)
     if len(onsets) < 2:
         warnings.append("insufficient onset peaks for stable tempo inference; fell back to default beat grid")
     if not drum_events:
