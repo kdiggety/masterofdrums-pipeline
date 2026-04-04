@@ -73,7 +73,7 @@ enum ChartGenerator {
                 offsetSeconds: timingOffsetSeconds,
                 ticksPerBeat: ticksPerBeat,
                 timeSignature: timeSignature,
-                source: usedAnalyzerTiming ? "analyzer" : "fallback"
+                source: usedAnalyzerTiming ? "generated" : "fallback"
             ),
             chart: BaseChartData(
                 generatedAt: generatedAt,
