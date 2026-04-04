@@ -20,6 +20,7 @@ public enum PipelineCLICommand: Equatable {
     case showJob(id: String)
     case listEvents(workflowID: String?, jobID: String?, limit: Int)
     case listArtifacts(workflowID: String?, jobID: String?, limit: Int)
+    case evaluateChartCorpus(corpusPath: String, chartsDirectory: String, songID: String?, tag: String?, outputPath: String?, textOutputPath: String?)
     case help
 }
 
@@ -155,9 +156,46 @@ public struct PipelineRuntime {
                 }
             }
 
+        case .evaluateChartCorpus(let corpusPath, let chartsDirectory, let songID, let tag, let outputPath, let textOutputPath):
+            let packaged = try Self.evaluateChartCorpus(
+                corpusPath: corpusPath,
+                chartsDirectory: chartsDirectory,
+                songID: songID,
+                tag: tag,
+                outputPath: outputPath,
+                textOutputPath: textOutputPath
+            )
+            print(packaged.text)
+
         case .help:
             print(Self.helpText)
         }
+    }
+
+    private static func evaluateChartCorpus(
+        corpusPath: String,
+        chartsDirectory: String,
+        songID: String?,
+        tag: String?,
+        outputPath: String?,
+        textOutputPath: String?
+    ) throws -> ChartEvaluationCorpusPackagedReport {
+        let corpusURL = URL(fileURLWithPath: corpusPath)
+        let chartsDirectoryURL = URL(fileURLWithPath: chartsDirectory, isDirectory: true)
+        let packaged = try ChartCorpusEvaluatorHarness.evaluate(
+            corpusURL: corpusURL,
+            chartsDirectoryURL: chartsDirectoryURL,
+            selection: .init(songID: songID, tag: tag)
+        )
+
+        if let outputPath {
+            let data = try JSONEncoder.pipeline.encode(packaged)
+            try data.write(to: URL(fileURLWithPath: outputPath), options: .atomic)
+        }
+        if let textOutputPath {
+            try packaged.text.write(to: URL(fileURLWithPath: textOutputPath), atomically: true, encoding: .utf8)
+        }
+        return packaged
     }
 
     private func runWorkerLoop(stopAfterIdlePolls: Int?) async throws {
@@ -1000,6 +1038,7 @@ public struct PipelineRuntime {
       show-job <job-id>
       list-events [--workflow-id <workflow-id>] [--job-id <job-id>] [--limit <count>]
       list-artifacts [--workflow-id <workflow-id>] [--job-id <job-id>] [--limit <count>]
+      evaluate-chart-corpus --corpus <path> --charts-dir <path> [--song-id <id>] [--tag <tag>] [--output-path <path>] [--text-output-path <path>]
 
     Worker environment:
       PIPELINE_WORKER_POLL_INTERVAL_SECONDS    Seconds to wait between empty polls (default: 1)
@@ -1057,6 +1096,15 @@ public enum PipelineCLIParser {
                 workflowID: value(for: "--workflow-id", in: args),
                 jobID: value(for: "--job-id", in: args),
                 limit: intValue(for: "--limit", in: args) ?? 50
+            )
+        case "evaluate-chart-corpus":
+            return .evaluateChartCorpus(
+                corpusPath: value(for: "--corpus", in: args) ?? "",
+                chartsDirectory: value(for: "--charts-dir", in: args) ?? "",
+                songID: value(for: "--song-id", in: args),
+                tag: value(for: "--tag", in: args),
+                outputPath: value(for: "--output-path", in: args),
+                textOutputPath: value(for: "--text-output-path", in: args)
             )
         default:
             return .help
@@ -1119,6 +1167,62 @@ public struct AudioIngestResult: Codable, Sendable {
         let encoder = JSONEncoder.pipeline
         guard let data = try? encoder.encode(self) else { return "{}" }
         return String(decoding: data, as: UTF8.self)
+    }
+}
+
+public struct ChartCorpusFileSelection: Sendable {
+    public let songID: String?
+    public let tag: String?
+
+    public init(songID: String? = nil, tag: String? = nil) {
+        self.songID = songID
+        self.tag = tag
+    }
+}
+
+public enum ChartCorpusEvaluatorHarness {
+    public static func evaluate(corpusURL: URL, chartsDirectoryURL: URL, selection: ChartCorpusFileSelection = .init()) throws -> ChartEvaluationCorpusPackagedReport {
+        let corpusData = try Data(contentsOf: corpusURL)
+        let decodedCorpus = try JSONDecoder.pipeline.decode(ChartEvaluationCorpus.self, from: corpusData)
+        let filteredSongs = decodedCorpus.songs.filter { song in
+            if let songID = selection.songID, song.id != songID { return false }
+            if let tag = selection.tag, !song.tags.contains(tag) { return false }
+            return true
+        }
+        let corpus = ChartEvaluationCorpus(schemaVersion: decodedCorpus.schemaVersion, songs: filteredSongs)
+        let generatedCharts = try loadCharts(from: chartsDirectoryURL)
+        return ChartEvaluationRunner.evaluate(corpus: corpus, generatedCharts: generatedCharts).packagedReport()
+    }
+
+    private static func loadCharts(from chartsDirectoryURL: URL) throws -> [String: [String: BaseChartContract]] {
+        let fm = FileManager.default
+        guard let enumerator = fm.enumerator(at: chartsDirectoryURL, includingPropertiesForKeys: nil) else {
+            return [:]
+        }
+
+        var charts: [String: [String: BaseChartContract]] = [:]
+        for case let fileURL as URL in enumerator {
+            guard fileURL.pathExtension == "json" else { continue }
+            guard let (songID, difficulty) = parseStem(fileURL.deletingPathExtension().lastPathComponent) else { continue }
+            let data = try Data(contentsOf: fileURL)
+            let chart = try JSONDecoder.pipeline.decode(BaseChartContract.self, from: data)
+            charts[songID, default: [:]][difficulty] = chart
+        }
+        return charts
+    }
+
+    static func parseStem(_ stem: String) -> (String, String)? {
+        let separators = ["--", "__"]
+        for separator in separators {
+            if let range = stem.range(of: separator, options: .backwards) {
+                let songID = String(stem[..<range.lowerBound])
+                let difficulty = String(stem[range.upperBound...])
+                if !songID.isEmpty && !difficulty.isEmpty {
+                    return (songID, difficulty)
+                }
+            }
+        }
+        return nil
     }
 }
 

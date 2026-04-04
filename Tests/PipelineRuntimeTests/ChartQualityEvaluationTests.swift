@@ -202,6 +202,49 @@ final class ChartQualityEvaluationTests: XCTestCase {
         XCTAssertEqual(report.score, 0.0, accuracy: 0.0001)
     }
 
+
+    func testEvaluatorFlagsFocusedLaneDistributionAndDensityDrift() {
+        let expectation = ChartQualityExpectation(
+            difficulty: "prototype",
+            noteCountRange: .init(min: 4, max: 8),
+            measureCountRange: .init(min: 2, max: 2),
+            requiredLanes: [.kick, .snare, .hihatClosed],
+            allowedLanes: [.kick, .snare, .hihatClosed],
+            minDistinctLanes: 3,
+            maxSimultaneousNotes: 1,
+            maxNotesPerBeat: 2,
+            maxNotesPerMeasure: 5,
+            allowedEmptyMeasures: 0,
+            minimumScore: 0.8,
+            focusedLaneExpectations: [
+                .init(lane: .kick, shareRange: .init(min: 0.20, max: 0.45), notesPerMeasureRange: .init(min: 0.5, max: 1.5), minNoteCount: 1, maxNoteCount: 3),
+                .init(lane: .snare, shareRange: .init(min: 0.20, max: 0.45), notesPerMeasureRange: .init(min: 0.5, max: 1.5), minNoteCount: 1, maxNoteCount: 3),
+                .init(lane: .hihatClosed, shareRange: .init(min: 0.25, max: 0.60), notesPerMeasureRange: .init(min: 1.0, max: 2.5), minNoteCount: 2, maxNoteCount: 5)
+            ]
+        )
+
+        let chart = makeChart(
+            difficulty: "prototype",
+            measures: 2,
+            notes: [
+                .init(lane: .kick, tick: 0, beatIndex: 0, startSeconds: 0.0),
+                .init(lane: .kick, tick: 240, beatIndex: 0, startSeconds: 0.25),
+                .init(lane: .kick, tick: 480, beatIndex: 1, startSeconds: 0.5),
+                .init(lane: .kick, tick: 720, beatIndex: 1, startSeconds: 0.75),
+                .init(lane: .snare, tick: 960, beatIndex: 2, startSeconds: 1.0),
+                .init(lane: .hihatClosed, tick: 1440, beatIndex: 3, startSeconds: 1.5)
+            ]
+        )
+
+        let report = ChartQualityEvaluator.evaluate(chart: chart, against: expectation)
+        let codes = Set(report.issues.map(\.code))
+        XCTAssertTrue(codes.contains("focused_lane_share_out_of_range"))
+        XCTAssertTrue(codes.contains("focused_lane_density_out_of_range"))
+        XCTAssertTrue(codes.contains("score_below_threshold"))
+        XCTAssertFalse(report.passed)
+        XCTAssertTrue(report.regressionSummary.contains("focused_lane_balance kick=4@0.67 snare=1@0.17 hihat_closed=1@0.17"))
+    }
+
     func testComparatorHighlightsFocusedLaneDistributionDrift() {
         let expectation = ChartQualityExpectation(
             difficulty: "prototype",

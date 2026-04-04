@@ -266,7 +266,7 @@ That gives future reviewers enough context to decide whether a changed report is
 - The corpus is still mostly synthetic.
 - Only one actual audio fixture exists right now; the real-clip entry is manifest scaffolding, not a checked-in licensed clip.
 - The score is still a sanity score, not a musicality score.
-- The text report is regression-friendly, but not yet exposed by a dedicated CLI command.
+- The text report is regression-friendly and is now exposed by the `evaluate-chart-corpus` CLI command.
 - The note preview is intentionally partial; it helps with drift detection but is not a full chart diff.
 - Per-measure density is useful, but still does not capture lane transitions or groove feel.
 - Missing expectations currently count as failures, which is useful for enforcement but may need separate severity later.
@@ -275,8 +275,7 @@ That gives future reviewers enough context to decide whether a changed report is
 ## Recommended next iteration
 
 1. land the first genuinely reviewable real clip and wire it into runtime/integration coverage
-2. expose corpus evaluation through a small CLI/testing harness instead of only XCTest
-3. persist `renderText()` and/or JSON reports as CI artifacts for human review
+2. persist `renderText()` and/or JSON reports as CI artifacts for human review
 4. decide how `baselineChartID` should reference artifacts or stored snapshots
 5. add stronger structural fingerprints if note counts grow large:
    - beat occupancy histograms
@@ -285,3 +284,28 @@ That gives future reviewers enough context to decide whether a changed report is
 6. split the corpus by tag so smoke tests can stay fast while deeper regression suites grow
 
 That is enough to move the chart loop a step closer to a real evaluation pipeline instead of vibes and eyeballing.
+
+
+## Operator-facing harness
+
+There is now a lightweight CLI seam for repeatable chart review without dropping into XCTest:
+
+```bash
+swift run MasterOfDrumsPipeline evaluate-chart-corpus   --corpus Tests/PipelineRuntimeTests/Fixtures/chart-eval-corpus.json   --charts-dir ./tmp/chart-eval   --tag smoke   --output-path ./tmp/chart-eval/report.json   --text-output-path ./tmp/chart-eval/report.txt
+```
+
+Conventions:
+
+- chart files are scanned recursively from `--charts-dir`
+- file names should be `<song-id>--<difficulty>.json` (or `<song-id>__<difficulty>.json`)
+- each file should decode as `BaseChartContract`
+- `--song-id` and `--tag` can narrow the corpus to one track or one review bucket
+
+The evaluator still uses the same domain scoring/reporting path, but expectations can now optionally encode focused-lane checks for the operator-critical backbone lanes:
+
+- kick share / notes-per-measure range
+- snare share / notes-per-measure range
+- hi-hat share / notes-per-measure range
+- per-lane min/max note-count guardrails
+
+That makes the harness better at flagging obvious misses and suspicious over-generation even when a chart still technically contains the required lanes.

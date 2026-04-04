@@ -143,7 +143,7 @@ Still to implement:
 - analyzer-driven chart shaping now applies beat-aware density controls so prototype charts keep one kick/snare backbone lane per beat, allow downbeat crash accents, and thin overlapping hi-hat stacks into pulse/texture instead of unreadable kick+snare+hat piles
 - downstream chart validation/export built on the normalized chart-generation artifacts
 - broader fixture/integration coverage beyond the single known WAV path (the corpus/reporting shape now includes real-clip review metadata, linting, and regression summaries, but only one actual WAV fixture is checked in)
-- a dedicated CLI surface for corpus evaluation/report export; the quality loop exists in tests/domain code with manifest linting and review-friendly text output, but is not yet an operator-facing command
+- a dedicated CLI surface now exists for corpus evaluation/report export via `evaluate-chart-corpus`, with focused kick/snare/hi-hat distribution checks and review-friendly text/JSON output
 
 Recent spike work for tasks 5/6:
 
@@ -217,6 +217,19 @@ swift run MasterOfDrumsPipeline list-artifacts --limit 20
 ```
 
 `list-artifacts` now appends a compact `summary="..."` field for `audio_analysis` artifacts so operators can spot the selected timing backend / fallback path without opening the JSON artifact by hand.
+
+For repeatable drum-event quality review on known tracks, you can now export generated base-chart JSON files into a directory and run:
+
+```bash
+swift run MasterOfDrumsPipeline evaluate-chart-corpus \
+  --corpus Tests/PipelineRuntimeTests/Fixtures/chart-eval-corpus.json \
+  --charts-dir ./tmp/chart-eval \
+  --tag smoke \
+  --output-path ./tmp/chart-eval/report.json \
+  --text-output-path ./tmp/chart-eval/report.txt
+```
+
+Chart files are discovered recursively from `--charts-dir` using the naming convention `<song-id>--<difficulty>.json` (or `__` as a separator). The report keeps the operator-facing text summary from the domain evaluator, including focused kick/snare/hi-hat balance, measure density, note previews, missing charts, and corpus pass/fail summaries. Add `--song-id <id>` to isolate one known track during review.
 
 For a repeatable operator-facing smoke run that exercises the same CLI surface end to end with a bundled WAV fixture and a deterministic mock analyzer, use:
 

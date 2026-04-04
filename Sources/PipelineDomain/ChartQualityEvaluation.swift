@@ -74,6 +74,7 @@ public struct ChartQualityExpectation: Codable, Sendable {
     public let maxNotesPerMeasure: Int?
     public let allowedEmptyMeasures: Int?
     public let minimumScore: Double?
+    public let focusedLaneExpectations: [FocusedLaneExpectation]
 
     public init(
         difficulty: String,
@@ -86,7 +87,8 @@ public struct ChartQualityExpectation: Codable, Sendable {
         maxNotesPerBeat: Int? = nil,
         maxNotesPerMeasure: Int? = nil,
         allowedEmptyMeasures: Int? = nil,
-        minimumScore: Double? = nil
+        minimumScore: Double? = nil,
+        focusedLaneExpectations: [FocusedLaneExpectation] = []
     ) {
         self.difficulty = difficulty
         self.noteCountRange = noteCountRange
@@ -99,6 +101,29 @@ public struct ChartQualityExpectation: Codable, Sendable {
         self.maxNotesPerMeasure = maxNotesPerMeasure
         self.allowedEmptyMeasures = allowedEmptyMeasures
         self.minimumScore = minimumScore
+        self.focusedLaneExpectations = focusedLaneExpectations
+    }
+}
+
+public struct FocusedLaneExpectation: Codable, Sendable {
+    public let lane: DrumLane
+    public let shareRange: DoubleRange?
+    public let notesPerMeasureRange: DoubleRange?
+    public let minNoteCount: Int?
+    public let maxNoteCount: Int?
+
+    public init(
+        lane: DrumLane,
+        shareRange: DoubleRange? = nil,
+        notesPerMeasureRange: DoubleRange? = nil,
+        minNoteCount: Int? = nil,
+        maxNoteCount: Int? = nil
+    ) {
+        self.lane = lane
+        self.shareRange = shareRange
+        self.notesPerMeasureRange = notesPerMeasureRange
+        self.minNoteCount = minNoteCount
+        self.maxNoteCount = maxNoteCount
     }
 }
 
@@ -290,6 +315,20 @@ public struct ChartRegressionMeasureDensity: Codable, Sendable {
     public init(measureIndex: Int, noteCount: Int) {
         self.measureIndex = measureIndex
         self.noteCount = noteCount
+    }
+}
+
+public struct DoubleRange: Codable, Sendable {
+    public let min: Double
+    public let max: Double
+
+    public init(min: Double, max: Double) {
+        self.min = min
+        self.max = max
+    }
+
+    public func contains(_ value: Double) -> Bool {
+        value >= min && value <= max
     }
 }
 
@@ -953,6 +992,46 @@ public enum ChartQualityEvaluator {
             penalty += min(0.15, 0.05 * Double(metrics.emptyMeasureCount - allowedEmptyMeasures))
         }
 
+        let focusedMetrics = Dictionary(uniqueKeysWithValues: metrics.focusedLaneBalance.map { ($0.lane, $0) })
+        for focusedExpectation in expectation.focusedLaneExpectations {
+            let metric = focusedMetrics[focusedExpectation.lane] ?? LaneBalanceMetric(lane: focusedExpectation.lane, noteCount: 0, noteShare: 0, notesPerMeasure: 0)
+
+            if let shareRange = focusedExpectation.shareRange, !shareRange.contains(metric.noteShare) {
+                issues.append(.init(
+                    code: "focused_lane_share_out_of_range",
+                    message: "Lane \(focusedExpectation.lane.rawValue) expected share in \(formatRange(shareRange)) but got \(format(metric.noteShare))."
+                ))
+                penalty += proportionalPenalty(actual: metric.noteShare, expectedRange: shareRange, cap: 0.18)
+            }
+
+            if let notesPerMeasureRange = focusedExpectation.notesPerMeasureRange,
+               !notesPerMeasureRange.contains(metric.notesPerMeasure) {
+                issues.append(.init(
+                    code: "focused_lane_density_out_of_range",
+                    message: "Lane \(focusedExpectation.lane.rawValue) expected notes/measure in \(formatRange(notesPerMeasureRange)) but got \(format(metric.notesPerMeasure))."
+                ))
+                penalty += proportionalPenalty(actual: metric.notesPerMeasure, expectedRange: notesPerMeasureRange, cap: 0.18)
+            }
+
+            if let minNoteCount = focusedExpectation.minNoteCount,
+               metric.noteCount < minNoteCount {
+                issues.append(.init(
+                    code: "focused_lane_note_count_too_low",
+                    message: "Lane \(focusedExpectation.lane.rawValue) expected at least \(minNoteCount) notes but got \(metric.noteCount)."
+                ))
+                penalty += min(0.15, 0.04 * Double(minNoteCount - metric.noteCount))
+            }
+
+            if let maxNoteCount = focusedExpectation.maxNoteCount,
+               metric.noteCount > maxNoteCount {
+                issues.append(.init(
+                    code: "focused_lane_note_count_too_high",
+                    message: "Lane \(focusedExpectation.lane.rawValue) expected at most \(maxNoteCount) notes but got \(metric.noteCount)."
+                ))
+                penalty += min(0.15, 0.04 * Double(metric.noteCount - maxNoteCount))
+            }
+        }
+
         let score = max(0, 1.0 - penalty)
         if let minimumScore = expectation.minimumScore,
            score < minimumScore {
@@ -1090,5 +1169,31 @@ public enum ChartQualityEvaluator {
         }
 
         return min(cap, (Double(delta) / Double(scale)) * cap)
+    }
+
+    private static func proportionalPenalty(actual: Double, expectedRange: DoubleRange, cap: Double) -> Double {
+        if expectedRange.contains(actual) {
+            return 0
+        }
+
+        let delta: Double
+        let scale: Double
+        if actual < expectedRange.min {
+            delta = expectedRange.min - actual
+            scale = max(expectedRange.min, 0.001)
+        } else {
+            delta = actual - expectedRange.max
+            scale = max(expectedRange.max, 0.001)
+        }
+
+        return min(cap, (delta / scale) * cap)
+    }
+
+    private static func format(_ value: Double) -> String {
+        String(format: "%.2f", value)
+    }
+
+    private static func formatRange(_ range: DoubleRange) -> String {
+        "\(format(range.min))...\(format(range.max))"
     }
 }
