@@ -57,7 +57,9 @@
         "barCount": { "type": "integer", "minimum": 0 },
         "drumEventCount": { "type": "integer", "minimum": 0 },
         "predominantTimeSignature": { "$ref": "#/$defs/timeSignature" },
-        "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }
+        "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "sourceProvenance": { "oneOf": [{ "$ref": "#/$defs/sourceProvenance" }, { "type": "null" }] },
+        "operatorSummary": { "oneOf": [{ "$ref": "#/$defs/operatorSummary" }, { "type": "null" }] }
       }
     },
     "beatGrid": {
@@ -153,6 +155,29 @@
         "velocity": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
         "sourceLabel": { "type": ["string", "null"], "minLength": 1 },
         "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }
+      }
+    },
+    "sourceProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timingSource", "eventSource"],
+      "properties": {
+        "timingSource": { "type": "string", "minLength": 1 },
+        "timingBackend": { "type": ["string", "null"], "minLength": 1 },
+        "eventSource": { "type": "string", "minLength": 1 },
+        "eventBackend": { "type": ["string", "null"], "minLength": 1 },
+        "eventBackendCommand": { "type": ["string", "null"], "minLength": 1 }
+      }
+    },
+    "operatorSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceSummary", "laneSummary", "confidenceSummary"],
+      "properties": {
+        "sourceSummary": { "type": "string", "minLength": 1 },
+        "laneSummary": { "type": "string", "minLength": 1 },
+        "confidenceSummary": { "type": "string", "minLength": 1 },
+        "warningSummary": { "type": ["string", "null"], "minLength": 1 }
       }
     },
     "drumEventDiagnostics": {

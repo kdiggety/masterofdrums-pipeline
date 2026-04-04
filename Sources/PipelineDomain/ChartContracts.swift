@@ -73,6 +73,8 @@ public struct NormalizedAnalysisSummary: Codable, Sendable {
     public let drumEventCount: Int
     public let predominantTimeSignature: TimeSignature
     public let confidence: Double?
+    public let sourceProvenance: NormalizedAnalysisSourceProvenance?
+    public let operatorSummary: NormalizedAnalysisOperatorSummary?
 
     public init(
         normalizedAt: Date,
@@ -83,7 +85,9 @@ public struct NormalizedAnalysisSummary: Codable, Sendable {
         barCount: Int,
         drumEventCount: Int,
         predominantTimeSignature: TimeSignature,
-        confidence: Double? = nil
+        confidence: Double? = nil,
+        sourceProvenance: NormalizedAnalysisSourceProvenance? = nil,
+        operatorSummary: NormalizedAnalysisOperatorSummary? = nil
     ) {
         self.normalizedAt = normalizedAt
         self.durationSeconds = durationSeconds
@@ -94,10 +98,42 @@ public struct NormalizedAnalysisSummary: Codable, Sendable {
         self.drumEventCount = drumEventCount
         self.predominantTimeSignature = predominantTimeSignature
         self.confidence = confidence
+        self.sourceProvenance = sourceProvenance
+        self.operatorSummary = operatorSummary
     }
 }
 
 extension NormalizedAnalysisSummary: JSONStringEncodable {}
+
+public struct NormalizedAnalysisSourceProvenance: Codable, Sendable {
+    public let timingSource: String
+    public let timingBackend: String?
+    public let eventSource: String
+    public let eventBackend: String?
+    public let eventBackendCommand: String?
+
+    public init(timingSource: String, timingBackend: String? = nil, eventSource: String, eventBackend: String? = nil, eventBackendCommand: String? = nil) {
+        self.timingSource = timingSource
+        self.timingBackend = timingBackend
+        self.eventSource = eventSource
+        self.eventBackend = eventBackend
+        self.eventBackendCommand = eventBackendCommand
+    }
+}
+
+public struct NormalizedAnalysisOperatorSummary: Codable, Sendable {
+    public let sourceSummary: String
+    public let laneSummary: String
+    public let confidenceSummary: String
+    public let warningSummary: String?
+
+    public init(sourceSummary: String, laneSummary: String, confidenceSummary: String, warningSummary: String? = nil) {
+        self.sourceSummary = sourceSummary
+        self.laneSummary = laneSummary
+        self.confidenceSummary = confidenceSummary
+        self.warningSummary = warningSummary
+    }
+}
 
 public struct DrumEventDiagnostics: Codable, Sendable {
     public let rawCandidateCount: Int

@@ -24,6 +24,8 @@ enum ChartGenerator {
         let warnings = combinedWarnings(for: analysis, beatGrid: beatGrid, drumEventResult: drumEventResult, usedAnalyzerTiming: usedAnalyzerTiming)
         let detectedSubdivisionCount = inferredSubdivisionsPerBeat(from: beatGrid)
         let usedAnalyzerEvents = drumEventResult.events.contains(where: { !($0.sourceLabel ?? "").hasPrefix("heuristic_") })
+        let sourceProvenance = makeSourceProvenance(from: analysis, drumEventResult: drumEventResult, usedAnalyzerTiming: usedAnalyzerTiming)
+        let operatorSummary = makeOperatorSummary(drumEvents: drumEventResult.events, sourceProvenance: sourceProvenance, warnings: warnings)
 
         let normalized = NormalizedAnalysisContract(
             source: NormalizedAnalysisSource(
@@ -41,7 +43,9 @@ enum ChartGenerator {
                 barCount: measures.count,
                 drumEventCount: drumEventResult.events.count,
                 predominantTimeSignature: timeSignature,
-                confidence: analysis.analysis.confidence
+                confidence: analysis.analysis.confidence,
+                sourceProvenance: sourceProvenance,
+                operatorSummary: operatorSummary
             ),
             beatGrid: beatGrid,
             drumEvents: drumEventResult.events,
@@ -135,6 +139,69 @@ enum ChartGenerator {
         }
         var seen = Set<String>()
         return warnings.filter { seen.insert($0).inserted }
+    }
+
+    private static func makeSourceProvenance(from analysis: AudioAnalysisContract, drumEventResult: DrumEventResult, usedAnalyzerTiming: Bool) -> NormalizedAnalysisSourceProvenance {
+        let eventSource = drumEventResult.diagnostics.usedFallback ? "heuristicDrumEvents" : (analysis.analysis.eventProvenance?.eventSource ?? "analyzer")
+        let eventBackend = drumEventResult.diagnostics.usedFallback
+            ? "heuristicDrumEvents"
+            : (analysis.analysis.eventProvenance?.backend ?? analysis.analysis.runtimeBackend)
+        return NormalizedAnalysisSourceProvenance(
+            timingSource: usedAnalyzerTiming ? "analyzer" : "heuristic",
+            timingBackend: analysis.analysis.timingProvenance?.backend ?? analysis.analysis.runtimeSelectedBackend ?? analysis.analysis.runtimeBackend,
+            eventSource: eventSource,
+            eventBackend: eventBackend,
+            eventBackendCommand: drumEventResult.diagnostics.usedFallback ? nil : analysis.analysis.eventProvenance?.backendCommand
+        )
+    }
+
+    private static func makeOperatorSummary(
+        drumEvents: [DetectedDrumEvent],
+        sourceProvenance: NormalizedAnalysisSourceProvenance,
+        warnings: [String]
+    ) -> NormalizedAnalysisOperatorSummary {
+        let laneSummary = Dictionary(grouping: drumEvents, by: \.lane)
+            .sorted { $0.key.rawValue < $1.key.rawValue }
+            .map { "\($0.key.rawValue)=\($0.value.count)" }
+            .joined(separator: " ")
+        let confidenceSummary = confidenceBandSummary(for: drumEvents)
+        let sourceSummary = [
+            "timing=\(sourceProvenance.timingSource)",
+            sourceProvenance.timingBackend.map { "timing_backend=\($0)" },
+            "events=\(sourceProvenance.eventSource)",
+            sourceProvenance.eventBackend.map { "event_backend=\($0)" }
+        ]
+        .compactMap { $0 }
+        .joined(separator: " ")
+        let notableWarnings = warnings.filter { warning in
+            warning.contains("heuristic") || warning.contains("Dropped ") || warning.contains("Collapsed ") || warning.contains("Reduced ") || warning.contains("Quantization drift")
+        }
+        let warningSummary = notableWarnings.isEmpty ? nil : notableWarnings.prefix(3).joined(separator: " | ")
+        return NormalizedAnalysisOperatorSummary(
+            sourceSummary: sourceSummary,
+            laneSummary: laneSummary.isEmpty ? "none" : laneSummary,
+            confidenceSummary: confidenceSummary,
+            warningSummary: warningSummary
+        )
+    }
+
+    private static func confidenceBandSummary(for drumEvents: [DetectedDrumEvent]) -> String {
+        var high = 0
+        var medium = 0
+        var low = 0
+        var unknown = 0
+        for event in drumEvents {
+            guard let confidence = event.confidence ?? event.velocity else {
+                unknown += 1
+                continue
+            }
+            switch confidence {
+            case 0.8...: high += 1
+            case 0.5..<0.8: medium += 1
+            default: low += 1
+            }
+        }
+        return "high=\(high) medium=\(medium) low=\(low) unknown=\(unknown)"
     }
 
     private static func makeBeatGrid(from analysis: AudioAnalysisContract, timeSignature: TimeSignature) -> [BeatGridEvent] {

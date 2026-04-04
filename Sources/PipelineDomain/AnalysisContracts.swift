@@ -70,6 +70,7 @@ public struct AudioAnalysisContract: Codable, Sendable {
         let analysisDict = firstDictionary(in: payload, keys: ["analysis"]) ?? [:]
         let runtime = firstDictionary(in: payload, keys: ["runtime"]) ?? [:]
         let timingProvenance = extractTimingProvenance(from: payload)
+        let eventProvenance = extractEventProvenance(from: payload)
         let segmentsSource = firstArray(in: payload, keys: ["segments", "sections"]) ?? []
         let segments = segmentsSource.enumerated().compactMap { index, item -> AudioAnalysisSegment? in
             guard let item else { return nil }
@@ -104,6 +105,7 @@ public struct AudioAnalysisContract: Codable, Sendable {
                 artifactURI: nil,
                 analyzerCommand: commandTemplate,
                 timingProvenance: timingProvenance,
+                eventProvenance: eventProvenance,
                 runtimeBackend: string(firstValue(in: runtime, keys: ["backend", "wrapper", "primaryBackend"])),
                 runtimeBackendCommand: string(firstValue(in: runtime, keys: ["backendCommand", "timingBackendCommand"])),
                 runtimeSelectedBackend: string(firstValue(in: runtime, keys: ["selectedBackend"])),
@@ -144,6 +146,7 @@ public struct AudioAnalysisSummary: Codable, Sendable {
     public let artifactURI: String?
     public let analyzerCommand: String?
     public let timingProvenance: AudioAnalysisTimingProvenance?
+    public let eventProvenance: AudioAnalysisEventProvenance?
     public let runtimeBackend: String?
     public let runtimeBackendCommand: String?
     public let runtimeSelectedBackend: String?
@@ -162,6 +165,7 @@ public struct AudioAnalysisSummary: Codable, Sendable {
         artifactURI: String? = nil,
         analyzerCommand: String? = nil,
         timingProvenance: AudioAnalysisTimingProvenance? = nil,
+        eventProvenance: AudioAnalysisEventProvenance? = nil,
         runtimeBackend: String? = nil,
         runtimeBackendCommand: String? = nil,
         runtimeSelectedBackend: String? = nil,
@@ -179,6 +183,7 @@ public struct AudioAnalysisSummary: Codable, Sendable {
         self.artifactURI = artifactURI
         self.analyzerCommand = analyzerCommand
         self.timingProvenance = timingProvenance
+        self.eventProvenance = eventProvenance
         self.runtimeBackend = runtimeBackend
         self.runtimeBackendCommand = runtimeBackendCommand
         self.runtimeSelectedBackend = runtimeSelectedBackend
@@ -208,6 +213,9 @@ public extension AudioAnalysisSummary {
             parts.append("timing=\(provenance.operatorSummaryLine)")
         } else if let runtimeSelectedBackend {
             parts.append("backend=\(runtimeSelectedBackend)")
+        }
+        if let eventProvenance {
+            parts.append("events=\(eventProvenance.operatorSummaryLine)")
         }
         return parts.joined(separator: " | ")
     }
@@ -257,6 +265,28 @@ public struct AudioAnalysisFallbackSummary: Codable, Sendable {
     }
 }
 
+public struct AudioAnalysisEventProvenance: Codable, Sendable {
+    public let backend: String
+    public let eventSource: String
+    public let backendCommand: String?
+    public let backendUsed: Bool
+    public let failureSummary: AudioAnalysisFallbackSummary?
+
+    public init(
+        backend: String,
+        eventSource: String,
+        backendCommand: String? = nil,
+        backendUsed: Bool,
+        failureSummary: AudioAnalysisFallbackSummary? = nil
+    ) {
+        self.backend = backend
+        self.eventSource = eventSource
+        self.backendCommand = backendCommand
+        self.backendUsed = backendUsed
+        self.failureSummary = failureSummary
+    }
+}
+
 public extension AudioAnalysisTimingProvenance {
     var operatorSummaryLine: String {
         var parts = ["\(backend) via \(timingSource)"]
@@ -285,6 +315,17 @@ public extension AudioAnalysisFallbackSummary {
             parts.append(reason)
         }
         return parts.joined(separator: ": ")
+    }
+}
+
+public extension AudioAnalysisEventProvenance {
+    var operatorSummaryLine: String {
+        var parts = ["\(backend) via \(eventSource)"]
+        parts.append("used=\(backendUsed ? "yes" : "no")")
+        if let failureSummary {
+            parts.append("fallback=\(failureSummary.operatorSummaryLine)")
+        }
+        return parts.joined(separator: ", ")
     }
 }
 
@@ -461,6 +502,40 @@ private func extractTimingProvenance(from payload: [String: Any]) -> AudioAnalys
     return nil
 }
 
+private func extractEventProvenance(from payload: [String: Any]) -> AudioAnalysisEventProvenance? {
+    let runtime = firstDictionary(in: payload, keys: ["runtime"]) ?? [:]
+    let eventBackendCommand = string(firstValue(in: runtime, keys: ["eventBackendCommand"]))
+    let eventBackendRuntime = firstDictionary(in: runtime, keys: ["eventBackendRuntime"]) ?? [:]
+    let eventBackendFailure = string(firstValue(in: runtime, keys: ["eventBackendFailure"]))
+    let eventBackendUsed = bool(firstValue(in: runtime, keys: ["eventBackendUsed"])) ?? false
+
+    if eventBackendUsed || eventBackendCommand != nil || eventBackendFailure != nil {
+        let backend = string(firstValue(in: eventBackendRuntime, keys: ["backend", "wrapper"]))
+            ?? backendLabel(from: eventBackendCommand)
+            ?? "event_backend"
+        let source = eventBackendUsed ? "stage2_backend" : "timing_only"
+        return AudioAnalysisEventProvenance(
+            backend: backend,
+            eventSource: source,
+            backendCommand: eventBackendCommand,
+            backendUsed: eventBackendUsed,
+            failureSummary: eventBackendFailure.map(makeFallbackSummary(reason:))
+        )
+    }
+
+    if extractRawEventCandidateCount(from: payload) > 0 {
+        return AudioAnalysisEventProvenance(
+            backend: "analyzer_payload",
+            eventSource: "embedded_candidates",
+            backendCommand: nil,
+            backendUsed: true,
+            failureSummary: nil
+        )
+    }
+
+    return nil
+}
+
 private func makeFallbackSummary(reason: String) -> AudioAnalysisFallbackSummary {
     let category: String
     if reason.contains("payload did not contain recognizable") {
@@ -495,6 +570,22 @@ private func backendLabel(from command: String?) -> String? {
         return "madmom_fallback"
     }
     return nil
+}
+
+private func extractRawEventCandidateCount(from payload: [String: Any]) -> Int {
+    let candidateKeys = ["drumEvents", "drum_events", "drumEventCandidates", "drum_event_candidates", "events", "hits", "notes", "candidates"]
+    for key in candidateKeys {
+        if let values = payload[key] as? [Any] {
+            return values.count
+        }
+    }
+    for containerKey in ["drums", "percussion", "timing", "transcription"] {
+        if let nested = payload[containerKey] as? [String: Any] {
+            let count = extractRawEventCandidateCount(from: nested)
+            if count > 0 { return count }
+        }
+    }
+    return 0
 }
 
 private func extractNote(from payload: [String: Any]) -> String? {

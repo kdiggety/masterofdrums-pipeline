@@ -101,6 +101,10 @@ final class ChartGenerationTests: XCTestCase {
         XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("Timing/events split: timing source=analyzer; drum-event source=analyzer") }))
         XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("Mapped 1 of 3 analyzer drum-event candidates") }))
         XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("Analyzer drum-event diagnostics: raw=3 mapped=1 post-shaping=1") }))
+        XCTAssertEqual(generated.normalized.summary.sourceProvenance?.timingSource, "analyzer")
+        XCTAssertEqual(generated.normalized.summary.sourceProvenance?.eventSource, "analyzer")
+        XCTAssertTrue(generated.normalized.summary.operatorSummary?.laneSummary.contains("tom_low=1") == true)
+        XCTAssertEqual(generated.normalized.summary.operatorSummary?.confidenceSummary, "high=1 medium=0 low=0 unknown=0")
     }
 
     func testGenerateDeduplicatesAnalyzerEventsThatCollapseIntoSameQuantizedLaneSlot() throws {
@@ -466,6 +470,49 @@ final class ChartGenerationTests: XCTestCase {
         XCTAssertTrue(generated.normalized.note?.contains("heuristicDrumEvents fallback shaping") == true)
         XCTAssertTrue(generated.baseChart.note?.contains("analyzer-provided timing") == true)
         XCTAssertTrue(generated.baseChart.note?.contains("heuristicDrumEvents fallback output") == true)
+        XCTAssertEqual(generated.normalized.summary.sourceProvenance?.timingSource, "analyzer")
+        XCTAssertEqual(generated.normalized.summary.sourceProvenance?.eventSource, "heuristicDrumEvents")
+        XCTAssertEqual(generated.normalized.summary.sourceProvenance?.eventBackend, "heuristicDrumEvents")
+        XCTAssertTrue(generated.normalized.summary.operatorSummary?.sourceSummary.contains("events=heuristicDrumEvents") == true)
+        XCTAssertTrue(generated.normalized.summary.operatorSummary?.warningSummary?.contains("heuristicDrumEvents supplied the playable drum events instead") == true)
+    }
+
+    func testAudioAnalysisContractCapturesStage2EventBackendProvenanceSeparatelyFromTiming() throws {
+        let payload: [String: Any] = [
+            "analysis": [
+                "audioTrackCount": 1,
+                "estimatedSegmentCount": 1,
+                "durationSeconds": 1.0,
+                "estimatedTempoBPM": 120.0,
+                "confidence": 0.8
+            ],
+            "beats": [0.0, 0.5, 1.0],
+            "drumEvents": [
+                ["eventID": "kick-1", "label": "kick", "onsetSeconds": 0.0, "confidence": 0.95]
+            ],
+            "runtime": [
+                "backend": "scripts/hybrid-drum-events-backend.py",
+                "selectedBackend": "primary",
+                "timingBackendCommand": "python scripts/backend-analyzer.py --input {input} --output {output}",
+                "eventBackendUsed": true,
+                "eventBackendCommand": "python scripts/backend-analyzer.py --input {input} --output {output}",
+                "eventBackendRuntime": ["backend": "fixture-event"]
+            ]
+        ]
+
+        let analysis = AudioAnalysisContract.fromAnalyzerOutput(
+            payload,
+            sourceType: "file",
+            sourceURI: "file:///tmp/test.wav",
+            requestedBy: "test",
+            analyzedAt: Date(timeIntervalSince1970: 0),
+            commandTemplate: "test"
+        )
+
+        XCTAssertEqual(analysis.analysis.timingProvenance?.backend, "heuristic_backend")
+        XCTAssertEqual(analysis.analysis.eventProvenance?.backend, "fixture-event")
+        XCTAssertEqual(analysis.analysis.eventProvenance?.eventSource, "stage2_backend")
+        XCTAssertTrue(analysis.analysis.operatorSummaryLine.contains("events=fixture-event via stage2_backend, used=yes"))
     }
 
     private func makeAnalysis(raw: [String: Any], tempo: Double? = 120.0, duration: Double? = 1.0) -> AudioAnalysisContract {

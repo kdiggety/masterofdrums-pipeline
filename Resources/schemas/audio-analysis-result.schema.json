@@ -68,16 +68,19 @@
             "backendCommand": { "type": ["string", "null"], "minLength": 1 },
             "selectedBackend": { "type": ["string", "null"], "minLength": 1 },
             "fallbackUsed": { "type": "boolean" },
-            "fallbackSummary": {
-              "type": ["object", "null"],
-              "additionalProperties": false,
-              "required": ["reason", "category"],
-              "properties": {
-                "reason": { "type": "string", "minLength": 1 },
-                "category": { "type": "string", "enum": ["configuration", "policy", "validation", "execution"] },
-                "errorSummary": { "type": ["string", "null"], "minLength": 1 }
-              }
-            }
+            "fallbackSummary": { "$ref": "#/$defs/fallbackSummaryNullable" }
+          }
+        },
+        "eventProvenance": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["backend", "eventSource", "backendUsed"],
+          "properties": {
+            "backend": { "type": "string", "minLength": 1 },
+            "eventSource": { "type": "string", "minLength": 1 },
+            "backendCommand": { "type": ["string", "null"], "minLength": 1 },
+            "backendUsed": { "type": "boolean" },
+            "failureSummary": { "$ref": "#/$defs/fallbackSummaryNullable" }
           }
         },
         "runtimeBackend": { "type": ["string", "null"], "minLength": 1 },
@@ -122,6 +125,24 @@
     },
     "rawAnalyzerOutput": {
       "type": ["object", "array", "string", "number", "boolean", "null"]
+    }
+  },
+  "$defs": {
+    "fallbackSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reason", "category"],
+      "properties": {
+        "reason": { "type": "string", "minLength": 1 },
+        "category": { "type": "string", "enum": ["configuration", "policy", "validation", "execution"] },
+        "errorSummary": { "type": ["string", "null"], "minLength": 1 }
+      }
+    },
+    "fallbackSummaryNullable": {
+      "oneOf": [
+        { "$ref": "#/$defs/fallbackSummary" },
+        { "type": "null" }
+      ]
     }
   }
 }
