@@ -34,6 +34,7 @@ DEFAULT_PRIMARY_ENV = "PIPELINE_ANALYZER_PRIMARY_BACKEND_COMMAND"
 DEFAULT_FALLBACK_ENV = "PIPELINE_ANALYZER_FALLBACK_BACKEND_COMMAND"
 DEFAULT_LEGACY_ENV = "PIPELINE_ANALYZER_BACKEND_COMMAND"
 DEFAULT_WRAPPER = "scripts/analyzer-wrapper.py"
+EVENT_ONSET_TOLERANCE_SECONDS = 0.05
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -146,6 +147,24 @@ DOWNBEAT_KEYS = (
     "downbeatTimes",
     "downbeat_times",
 )
+EVENT_KEYS = (
+    "drumEvents",
+    "drum_events",
+    "events",
+    "hits",
+    "notes",
+    "candidates",
+    "predictions",
+    "detections",
+)
+
+
+CONFIDENCE_BUCKETS: tuple[tuple[str, float, float], ...] = (
+    ("unknown", float("-inf"), float("-inf")),
+    ("low", 0.0, 0.5),
+    ("medium", 0.5, 0.8),
+    ("high", 0.8, 1.01),
+)
 
 
 def first_list(payload: dict[str, Any], *keys: str) -> list[Any]:
@@ -205,12 +224,63 @@ def extract_segments(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return result
 
 
+def extract_events(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    candidates: list[Any] = []
+    candidates.extend(first_list(payload, *EVENT_KEYS))
+    timing = nested_dict(payload, "timing")
+    analysis = nested_dict(payload, "analysis")
+    candidates.extend(first_list(timing, *EVENT_KEYS))
+    candidates.extend(first_list(analysis, *EVENT_KEYS))
+
+    result: list[dict[str, Any]] = []
+    for index, item in enumerate(candidates):
+        if not isinstance(item, dict):
+            continue
+        onset = safe_float(
+            item.get("onsetSeconds", item.get("onset_seconds", item.get("seconds", item.get("time", item.get("start")))))
+        )
+        lane_value = item.get("lane", item.get("instrument", item.get("type", item.get("class"))))
+        lane = str(lane_value).strip() if lane_value is not None and str(lane_value).strip() else "unknown"
+        source_value = item.get("sourceLabel", item.get("source", item.get("origin", item.get("backend"))))
+        source = str(source_value).strip() if source_value is not None and str(source_value).strip() else "unknown"
+        confidence = safe_float(item.get("confidence", item.get("score", item.get("probability"))))
+        event_id_value = item.get("eventID", item.get("eventId", item.get("id")))
+        result.append({
+            "index": index,
+            "eventID": str(event_id_value) if event_id_value is not None else None,
+            "onsetSeconds": round(onset, 6) if onset is not None else None,
+            "lane": lane,
+            "label": str(item.get("label")) if item.get("label") is not None else None,
+            "confidence": round(confidence, 4) if confidence is not None else None,
+            "source": source,
+        })
+    result.sort(key=lambda item: (item["onsetSeconds"] is None, item["onsetSeconds"] if item["onsetSeconds"] is not None else float("inf"), item["lane"], item["index"]))
+    return result
+
+
+def bucket_confidence(value: float | None) -> str:
+    if value is None:
+        return "unknown"
+    for name, lower, upper in CONFIDENCE_BUCKETS[1:]:
+        if lower <= value < upper:
+            return name
+    return "high"
+
+
+def tally_strings(values: list[str]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for value in values:
+        counts[value] = counts.get(value, 0) + 1
+    return {key: counts[key] for key in sorted(counts)}
+
+
 def summarize_payload(payload: dict[str, Any]) -> dict[str, Any]:
     analysis = nested_dict(payload, "analysis")
     runtime = nested_dict(payload, "runtime")
     beats = extract_times(payload, TIMING_KEYS)
     downbeats = extract_times(payload, DOWNBEAT_KEYS)
     segments = extract_segments(payload)
+    events = extract_events(payload)
     provenance = {
         "backend": runtime.get("backend"),
         "selectedBackend": runtime.get("selectedBackend"),
@@ -222,11 +292,17 @@ def summarize_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "fallbackReason": runtime.get("fallbackReason"),
         "mode": runtime.get("mode"),
         "model": runtime.get("model"),
+        "eventBackendUsed": runtime.get("eventBackendUsed"),
+        "eventBackendCommand": runtime.get("eventBackendCommand"),
     }
     beat_intervals = [round(b - a, 6) for a, b in zip(beats, beats[1:]) if b > a]
+    lane_counts = tally_strings([event["lane"] for event in events])
+    source_counts = tally_strings([event["source"] for event in events])
+    confidence_counts = tally_strings([bucket_confidence(event["confidence"]) for event in events])
     return {
         "tempoBPM": safe_float(analysis.get("estimatedTempoBPM", analysis.get("tempoBPM"))),
         "downbeatOffsetSeconds": safe_float(analysis.get("downbeatOffsetSeconds", analysis.get("downbeat_offset_seconds"))),
+        "analysisConfidence": safe_float(analysis.get("confidence")),
         "beatCount": len(beats),
         "beatStarts": beats,
         "beatIntervals": beat_intervals,
@@ -242,6 +318,12 @@ def summarize_payload(payload: dict[str, Any]) -> dict[str, Any]:
             }
             for segment in segments
         ],
+        "eventCount": len(events),
+        "eventLaneCounts": lane_counts,
+        "eventSourceCounts": source_counts,
+        "eventConfidenceCounts": confidence_counts,
+        "eventOnsets": [event["onsetSeconds"] for event in events if event["onsetSeconds"] is not None],
+        "eventsPreview": events[:12],
         "warnings": payload.get("warnings") if isinstance(payload.get("warnings"), list) else [],
         "provenance": provenance,
     }
@@ -266,6 +348,69 @@ def compare_lists(left: list[Any], right: list[Any], *, tolerance: float = 0.000
     }
 
 
+def compare_count_maps(left: dict[str, int], right: dict[str, int]) -> dict[str, Any]:
+    keys = sorted(set(left) | set(right))
+    differences = []
+    for key in keys:
+        lhs = left.get(key, 0)
+        rhs = right.get(key, 0)
+        if lhs != rhs:
+            differences.append({"key": key, "primary": lhs, "fallback": rhs, "delta": rhs - lhs})
+    return {
+        "primaryTotal": sum(left.values()),
+        "fallbackTotal": sum(right.values()),
+        "differenceCount": len(differences),
+        "differencesPreview": differences[:12],
+    }
+
+
+def compare_event_onsets(left: list[float], right: list[float], *, tolerance: float = EVENT_ONSET_TOLERANCE_SECONDS) -> dict[str, Any]:
+    matched_right: set[int] = set()
+    matches: list[dict[str, Any]] = []
+    primary_only: list[dict[str, Any]] = []
+
+    for left_index, left_onset in enumerate(left):
+        best_index = None
+        best_delta = None
+        for right_index, right_onset in enumerate(right):
+            if right_index in matched_right:
+                continue
+            delta = right_onset - left_onset
+            if abs(delta) > tolerance:
+                continue
+            if best_delta is None or abs(delta) < abs(best_delta):
+                best_index = right_index
+                best_delta = delta
+        if best_index is None:
+            primary_only.append({"index": left_index, "onsetSeconds": left_onset})
+            continue
+        matched_right.add(best_index)
+        matches.append({
+            "primaryIndex": left_index,
+            "fallbackIndex": best_index,
+            "primaryOnsetSeconds": left_onset,
+            "fallbackOnsetSeconds": right[best_index],
+            "delta": round(best_delta or 0.0, 6),
+        })
+
+    fallback_only = [
+        {"index": right_index, "onsetSeconds": right_onset}
+        for right_index, right_onset in enumerate(right)
+        if right_index not in matched_right
+    ]
+    mismatched_matches = [item for item in matches if abs(item["delta"]) > 0.0005]
+    return {
+        "toleranceSeconds": tolerance,
+        "matchCount": len(matches),
+        "matchedButShiftedCount": len(mismatched_matches),
+        "primaryOnlyCount": len(primary_only),
+        "fallbackOnlyCount": len(fallback_only),
+        "shiftedPreview": mismatched_matches[:12],
+        "primaryOnlyPreview": primary_only[:12],
+        "fallbackOnlyPreview": fallback_only[:12],
+    }
+
+
 PROVENANCE_KEYS = (
     "backend",
     "selectedBackend",
@@ -277,6 +422,8 @@ PROVENANCE_KEYS = (
     "fallbackReason",
     "mode",
     "model",
+    "eventBackendUsed",
+    "eventBackendCommand",
 )
 
 
@@ -299,6 +446,11 @@ def build_delta(primary: dict[str, Any], fallback: dict[str, Any]) -> dict[str, 
             "fallback": fallback["downbeatOffsetSeconds"],
             "delta": round((fallback["downbeatOffsetSeconds"] or 0) - (primary["downbeatOffsetSeconds"] or 0), 6) if primary["downbeatOffsetSeconds"] is not None and fallback["downbeatOffsetSeconds"] is not None else None,
         },
+        "analysisConfidence": {
+            "primary": primary["analysisConfidence"],
+            "fallback": fallback["analysisConfidence"],
+            "delta": round((fallback["analysisConfidence"] or 0) - (primary["analysisConfidence"] or 0), 6) if primary["analysisConfidence"] is not None and fallback["analysisConfidence"] is not None else None,
+        },
         "beatGrid": {
             "primaryBeatCount": primary["beatCount"],
             "fallbackBeatCount": fallback["beatCount"],
@@ -310,6 +462,15 @@ def build_delta(primary: dict[str, Any], fallback: dict[str, Any]) -> dict[str, 
             "primarySegmentCount": primary["segmentCount"],
             "fallbackSegmentCount": fallback["segmentCount"],
             "boundaries": compare_lists(primary["segmentBoundaries"], fallback["segmentBoundaries"]),
+        },
+        "events": {
+            "primaryEventCount": primary["eventCount"],
+            "fallbackEventCount": fallback["eventCount"],
+            "countDelta": fallback["eventCount"] - primary["eventCount"],
+            "laneCounts": compare_count_maps(primary["eventLaneCounts"], fallback["eventLaneCounts"]),
+            "sourceCounts": compare_count_maps(primary["eventSourceCounts"], fallback["eventSourceCounts"]),
+            "confidenceCounts": compare_count_maps(primary["eventConfidenceCounts"], fallback["eventConfidenceCounts"]),
+            "onsets": compare_event_onsets(primary["eventOnsets"], fallback["eventOnsets"]),
         },
         "provenance": provenance_delta,
     }
@@ -325,18 +486,25 @@ def render_text(summary: dict[str, Any]) -> str:
         f"output_dir: {summary['outputDir']}",
         "",
         "primary:",
-        f"  tempo_bpm={primary['tempoBPM']} downbeat_offset={primary['downbeatOffsetSeconds']} beat_count={primary['beatCount']} segment_count={primary['segmentCount']}",
+        f"  tempo_bpm={primary['tempoBPM']} downbeat_offset={primary['downbeatOffsetSeconds']} beat_count={primary['beatCount']} segment_count={primary['segmentCount']} event_count={primary['eventCount']} analysis_confidence={primary['analysisConfidence']}",
         f"  backend={primary['provenance'].get('backend')} selected={primary['provenance'].get('selectedBackend')} fallback_used={primary['provenance'].get('fallbackUsed')}",
+        f"  lane_mix={json.dumps(primary['eventLaneCounts'], sort_keys=True)}",
+        f"  confidence_mix={json.dumps(primary['eventConfidenceCounts'], sort_keys=True)} source_mix={json.dumps(primary['eventSourceCounts'], sort_keys=True)}",
         "fallback:",
-        f"  tempo_bpm={fallback['tempoBPM']} downbeat_offset={fallback['downbeatOffsetSeconds']} beat_count={fallback['beatCount']} segment_count={fallback['segmentCount']}",
+        f"  tempo_bpm={fallback['tempoBPM']} downbeat_offset={fallback['downbeatOffsetSeconds']} beat_count={fallback['beatCount']} segment_count={fallback['segmentCount']} event_count={fallback['eventCount']} analysis_confidence={fallback['analysisConfidence']}",
         f"  backend={fallback['provenance'].get('backend')} selected={fallback['provenance'].get('selectedBackend')} fallback_used={fallback['provenance'].get('fallbackUsed')}",
+        f"  lane_mix={json.dumps(fallback['eventLaneCounts'], sort_keys=True)}",
+        f"  confidence_mix={json.dumps(fallback['eventConfidenceCounts'], sort_keys=True)} source_mix={json.dumps(fallback['eventSourceCounts'], sort_keys=True)}",
         "",
         "deltas:",
         f"  tempo_bpm_delta={delta['tempoBPM']['delta']}",
         f"  downbeat_offset_delta={delta['downbeatOffsetSeconds']['delta']}",
+        f"  analysis_confidence_delta={delta['analysisConfidence']['delta']}",
         f"  beat_count_delta={delta['beatGrid']['beatStarts']['countDelta']} beat_start_mismatches={delta['beatGrid']['beatStarts']['mismatchCount']} beat_interval_mismatches={delta['beatGrid']['beatIntervals']['mismatchCount']}",
         f"  downbeat_count_delta={delta['beatGrid']['downbeatStarts']['countDelta']} downbeat_mismatches={delta['beatGrid']['downbeatStarts']['mismatchCount']}",
         f"  segment_count_delta={delta['segments']['boundaries']['countDelta']} segment_boundary_mismatches={delta['segments']['boundaries']['mismatchCount']}",
+        f"  event_count_delta={delta['events']['countDelta']} lane_mix_differences={delta['events']['laneCounts']['differenceCount']} confidence_mix_differences={delta['events']['confidenceCounts']['differenceCount']} source_mix_differences={delta['events']['sourceCounts']['differenceCount']}",
+        f"  event_onset_matches={delta['events']['onsets']['matchCount']} shifted_matches={delta['events']['onsets']['matchedButShiftedCount']} primary_only_onsets={delta['events']['onsets']['primaryOnlyCount']} fallback_only_onsets={delta['events']['onsets']['fallbackOnlyCount']}",
     ]
     if delta["provenance"]:
         lines.append("  provenance_differences:")
@@ -349,6 +517,12 @@ def render_text(summary: dict[str, Any]) -> str:
         ("beat_start_mismatch_preview", delta["beatGrid"]["beatStarts"]["mismatchesPreview"]),
         ("downbeat_mismatch_preview", delta["beatGrid"]["downbeatStarts"]["mismatchesPreview"]),
         ("segment_boundary_mismatch_preview", delta["segments"]["boundaries"]["mismatchesPreview"]),
+        ("event_lane_difference_preview", delta["events"]["laneCounts"]["differencesPreview"]),
+        ("event_confidence_difference_preview", delta["events"]["confidenceCounts"]["differencesPreview"]),
+        ("event_source_difference_preview", delta["events"]["sourceCounts"]["differencesPreview"]),
+        ("event_shifted_preview", delta["events"]["onsets"]["shiftedPreview"]),
+        ("event_primary_only_preview", delta["events"]["onsets"]["primaryOnlyPreview"]),
+        ("event_fallback_only_preview", delta["events"]["onsets"]["fallbackOnlyPreview"]),
     ]
     for label, items in preview_sections:
         if items:
