@@ -121,6 +121,13 @@ final class ChartCorpusEvaluatorHarnessTests: XCTestCase {
                 sourceURI: "file:///tmp/source.wav",
                 requestedBy: "test"
             ),
+            timing: BaseChartTiming(
+                bpm: 120,
+                offsetSeconds: 0,
+                ticksPerBeat: 480,
+                timeSignature: .init(numerator: 4, denominator: 4),
+                source: "fallback"
+            ),
             chart: BaseChartData(
                 generatedAt: Date(timeIntervalSince1970: 0),
                 lanes: Array(Set(notes.map(\.lane))).sorted { $0.rawValue < $1.rawValue },

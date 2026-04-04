@@ -20,6 +20,13 @@ final class ChartGenerationTests: XCTestCase {
 
         XCTAssertEqual(generated.normalized.summary.beatCount, 3)
         XCTAssertEqual(generated.normalized.beatGrid.count, 12)
+        XCTAssertEqual(generated.baseChart.timingContractVersion, "0.1.0")
+        XCTAssertEqual(generated.baseChart.timing.bpm, 120, accuracy: 0.0001)
+        XCTAssertEqual(generated.baseChart.timing.offsetSeconds, 0, accuracy: 0.0001)
+        XCTAssertEqual(generated.baseChart.timing.ticksPerBeat, 480)
+        XCTAssertEqual(generated.baseChart.timing.timeSignature.numerator, 4)
+        XCTAssertEqual(generated.baseChart.timing.timeSignature.denominator, 4)
+        XCTAssertEqual(generated.baseChart.timing.source, "analyzer")
         XCTAssertEqual(generated.baseChart.chart.notes.count, 2)
         XCTAssertEqual(generated.baseChart.chart.notes[0].tick, 120)
         XCTAssertEqual(generated.baseChart.chart.notes[0].subdivisionIndex, 1)

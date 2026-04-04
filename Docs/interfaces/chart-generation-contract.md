@@ -167,6 +167,8 @@ The base chart is the first chart-shaped artifact intended for deterministic val
 - `chartStage` — `base_chart_v1`
 - `status`
 - `source`
+- `timingContractVersion` — temporary timing handoff version, currently `0.1.0`
+- `timing`
 - `chart`
 - `warnings`
 - `note`
@@ -178,10 +180,20 @@ The base chart is the first chart-shaped artifact intended for deterministic val
 - `sourceURI`
 - `requestedBy`
 
+### `timing`
+
+Temporary chart timing contract surfaced on generated base-chart artifacts so downstream consumers can rely on a stable handoff without unpacking the full chart body.
+
+- `bpm`
+- `offsetSeconds`
+- `ticksPerBeat` — default proposed value: `480`
+- `timeSignature`
+- `source` — currently `analyzer` or `fallback`
+
 ### `chart`
 
 - `generatedAt`
-- `ticksPerBeat` — default proposed value: `480`
+- `ticksPerBeat`
 - `offsetSeconds`
 - `lanes`
 - `difficulty`

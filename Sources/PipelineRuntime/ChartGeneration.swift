@@ -60,6 +60,7 @@ enum ChartGenerator {
 
         let notes = makeChartNotes(from: normalized.drumEvents, ticksPerBeat: ticksPerBeat, beatGrid: beatGrid)
         let lanes = Array(Set(notes.map { $0.lane })).sorted { $0.rawValue < $1.rawValue }
+        let timingOffsetSeconds = analysis.analysis.downbeatOffsetSeconds ?? 0
         let baseChart = BaseChartContract(
             source: BaseChartSource(
                 normalizedAnalysisArtifactURI: normalizedAnalysisArtifactURI,
@@ -67,10 +68,17 @@ enum ChartGenerator {
                 sourceURI: analysis.source.sourceURI,
                 requestedBy: analysis.source.requestedBy
             ),
+            timing: BaseChartTiming(
+                bpm: analysis.analysis.estimatedTempoBPM,
+                offsetSeconds: timingOffsetSeconds,
+                ticksPerBeat: ticksPerBeat,
+                timeSignature: timeSignature,
+                source: usedAnalyzerTiming ? "analyzer" : "fallback"
+            ),
             chart: BaseChartData(
                 generatedAt: generatedAt,
                 ticksPerBeat: ticksPerBeat,
-                offsetSeconds: analysis.analysis.downbeatOffsetSeconds ?? 0,
+                offsetSeconds: timingOffsetSeconds,
                 lanes: lanes.isEmpty ? [.kick] : lanes,
                 difficulty: usedAnalyzerEvents ? "prototype" : "normal",
                 measures: measures,
