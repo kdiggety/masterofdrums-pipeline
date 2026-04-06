@@ -501,7 +501,9 @@ final class ChartGenerationTests: XCTestCase {
                 "backend": "scripts/hybrid-drum-events-backend.py",
                 "selectedBackend": "primary",
                 "timingBackendCommand": "python scripts/backend-analyzer.py --input {input} --output {output}",
+                "eventBackendRan": true,
                 "eventBackendUsed": true,
+                "eventBackendCandidateCount": 1,
                 "eventBackendCommand": "python scripts/backend-analyzer.py --input {input} --output {output}",
                 "eventBackendRuntime": ["backend": "fixture-event"]
             ]
@@ -520,6 +522,45 @@ final class ChartGenerationTests: XCTestCase {
         XCTAssertEqual(analysis.analysis.eventProvenance?.backend, "fixture-event")
         XCTAssertEqual(analysis.analysis.eventProvenance?.eventSource, "stage2_backend")
         XCTAssertTrue(analysis.analysis.operatorSummaryLine.contains("events=fixture-event via stage2_backend, used=yes"))
+    }
+
+    func testAudioAnalysisContractMarksEmptyStage2EventBackendAsAuditedButUnused() throws {
+        let payload: [String: Any] = [
+            "analysis": [
+                "audioTrackCount": 1,
+                "estimatedSegmentCount": 1,
+                "durationSeconds": 1.0,
+                "estimatedTempoBPM": 120.0,
+                "confidence": 0.8
+            ],
+            "beats": [0.0, 0.5, 1.0],
+            "runtime": [
+                "backend": "scripts/hybrid-drum-events-backend.py",
+                "selectedBackend": "primary",
+                "timingBackendCommand": "python scripts/beat-this-backend.py --input {input} --output {output}",
+                "eventBackendRan": true,
+                "eventBackendUsed": false,
+                "eventBackendCandidateCount": 0,
+                "eventBackendCommand": "python scripts/adtof-output-adapter.py --input {input} --output {output}",
+                "eventBackendRuntime": ["backend": "fixture-adtof"]
+            ]
+        ]
+
+        let analysis = AudioAnalysisContract.fromAnalyzerOutput(
+            payload,
+            sourceType: "file",
+            sourceURI: "file:///tmp/test.wav",
+            requestedBy: "test",
+            analyzedAt: Date(timeIntervalSince1970: 0),
+            commandTemplate: "test"
+        )
+
+        XCTAssertEqual(analysis.analysis.timingProvenance?.backend, "beat_this")
+        XCTAssertEqual(analysis.analysis.eventProvenance?.backend, "fixture-adtof")
+        XCTAssertEqual(analysis.analysis.eventProvenance?.eventSource, "stage2_backend_empty")
+        XCTAssertFalse(analysis.analysis.eventProvenance?.backendUsed ?? true)
+        XCTAssertEqual(analysis.analysis.eventProvenance?.failureSummary?.category, "empty")
+        XCTAssertTrue(analysis.analysis.operatorSummaryLine.contains("events=fixture-adtof via stage2_backend_empty, used=no"))
     }
 
     private func makeAnalysis(raw: [String: Any], tempo: Double? = 120.0, duration: Double? = 1.0) -> AudioAnalysisContract {

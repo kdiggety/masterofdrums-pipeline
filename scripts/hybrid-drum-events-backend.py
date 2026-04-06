@@ -115,7 +115,9 @@ def merge_payloads(timing_payload: dict[str, Any], event_payload: dict[str, Any]
     runtime["timingBackendCommand"] = timing_command
     runtime["eventBackendCommand"] = event_command
     runtime["eventPolicy"] = event_policy
-    runtime["eventBackendUsed"] = bool(event_payload)
+    runtime["eventBackendRan"] = bool(event_payload)
+    runtime["eventBackendUsed"] = False
+    runtime["eventBackendCandidateCount"] = 0
     runtime["eventBackendFailure"] = event_failure
 
     note_parts = []
@@ -124,8 +126,10 @@ def merge_payloads(timing_payload: dict[str, Any], event_payload: dict[str, Any]
 
     if event_payload:
         drum_events = extract_drum_events(event_payload)
+        runtime["eventBackendCandidateCount"] = len(drum_events)
         if drum_events:
             merged["drumEvents"] = drum_events
+            runtime["eventBackendUsed"] = True
             append_warning(merged, f"Merged {len(drum_events)} stage-2 drum-event candidates into timing-backed analyzer output")
             note_parts.append("Hybrid backend merged stage-2 drum-event candidates onto the timing backbone.")
         else:

@@ -27,6 +27,13 @@ EVENT_BACKEND = (
     "pathlib.Path(a.output).write_text(json.dumps({'drumEvents': [{'eventID': 'kick-1', 'onsetSeconds': 0.0, 'label': 'kick', 'velocity': 0.95}, {'eventID': 'snare-1', 'onsetSeconds': 0.5, 'label': 'snare', 'velocity': 0.85}], 'warnings': ['event-backend'], 'note': 'event candidates ready', 'runtime': {'backend': 'fixture-event'}}) + '\n', encoding='utf-8')"
 )
 
+EVENT_EMPTY = (
+    "import argparse, json, pathlib; "
+    "p=argparse.ArgumentParser(); p.add_argument('--input', required=True); p.add_argument('--output', required=True); "
+    "a=p.parse_args(); "
+    "pathlib.Path(a.output).write_text(json.dumps({'warnings': ['event-backend-empty'], 'note': 'no event candidates', 'runtime': {'backend': 'fixture-empty-event'}}) + '\n', encoding='utf-8')"
+)
+
 EVENT_FAIL = "raise SystemExit(9)"
 
 
@@ -65,6 +72,28 @@ def test_merges_stage2_event_candidates_into_timing_payload() -> None:
         assert runtime.get("eventBackendRuntime", {}).get("backend") == "fixture-event", runtime
 
 
+def test_timing_payload_marks_empty_event_backend_as_ran_but_unused() -> None:
+    with tempfile.TemporaryDirectory() as raw:
+        tempdir = pathlib.Path(raw)
+        payload = run_backend(
+            tempdir,
+            "--timing-backend-command",
+            backend_command(TIMING_BACKEND),
+            "--event-backend-command",
+            backend_command(EVENT_EMPTY),
+            "--event-policy",
+            "optional",
+        )
+        assert payload.get("beats") == [0.0, 0.5, 1.0], payload
+        assert payload.get("drumEvents") is None, payload
+        assert any("Event backend returned no drum-event candidates; timing-only payload kept" in warning for warning in payload.get("warnings", [])), payload
+        runtime = payload.get("runtime", {})
+        assert runtime.get("eventBackendRan") is True, runtime
+        assert runtime.get("eventBackendUsed") is False, runtime
+        assert runtime.get("eventBackendCandidateCount") == 0, runtime
+        assert runtime.get("eventBackendRuntime", {}).get("backend") == "fixture-empty-event", runtime
+
+
 def test_timing_payload_survives_optional_event_backend_failure() -> None:
     with tempfile.TemporaryDirectory() as raw:
         tempdir = pathlib.Path(raw)
@@ -81,7 +110,9 @@ def test_timing_payload_survives_optional_event_backend_failure() -> None:
         assert payload.get("drumEvents") is None, payload
         assert any("Stage-2 drum-event backend failed; timing-only payload kept" in warning for warning in payload.get("warnings", [])), payload
         runtime = payload.get("runtime", {})
+        assert runtime.get("eventBackendRan") is False, runtime
         assert runtime.get("eventBackendUsed") is False, runtime
+        assert runtime.get("eventBackendCandidateCount") == 0, runtime
         assert "status 9" in (runtime.get("eventBackendFailure") or "") or runtime.get("eventBackendFailure"), runtime
 
 
@@ -112,6 +143,7 @@ def test_required_event_backend_failure_is_fatal() -> None:
 
 if __name__ == "__main__":
     test_merges_stage2_event_candidates_into_timing_payload()
+    test_timing_payload_marks_empty_event_backend_as_ran_but_unused()
     test_timing_payload_survives_optional_event_backend_failure()
     test_required_event_backend_failure_is_fatal()
     print("hybrid-drum-events-backend smoke tests passed")

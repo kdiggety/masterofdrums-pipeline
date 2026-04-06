@@ -508,18 +508,31 @@ private func extractEventProvenance(from payload: [String: Any]) -> AudioAnalysi
     let eventBackendRuntime = firstDictionary(in: runtime, keys: ["eventBackendRuntime"]) ?? [:]
     let eventBackendFailure = string(firstValue(in: runtime, keys: ["eventBackendFailure"]))
     let eventBackendUsed = bool(firstValue(in: runtime, keys: ["eventBackendUsed"])) ?? false
+    let eventBackendRan = bool(firstValue(in: runtime, keys: ["eventBackendRan"])) ?? eventBackendUsed
+    let eventBackendCandidateCount = int(firstValue(in: runtime, keys: ["eventBackendCandidateCount"])) ?? 0
 
-    if eventBackendUsed || eventBackendCommand != nil || eventBackendFailure != nil {
+    if eventBackendRan || eventBackendCommand != nil || eventBackendFailure != nil {
         let backend = string(firstValue(in: eventBackendRuntime, keys: ["backend", "wrapper"]))
             ?? backendLabel(from: eventBackendCommand)
             ?? "event_backend"
-        let source = eventBackendUsed ? "stage2_backend" : "timing_only"
+        let source: String
+        if eventBackendUsed {
+            source = "stage2_backend"
+        } else if eventBackendRan {
+            source = "stage2_backend_empty"
+        } else {
+            source = "timing_only"
+        }
+        let failureSummary = eventBackendFailure.map(makeFallbackSummary(reason:))
+            ?? ((eventBackendRan && !eventBackendUsed && eventBackendCandidateCount == 0)
+                ? AudioAnalysisFallbackSummary(reason: "stage-2 event backend returned no drum-event candidates", category: "empty", errorSummary: nil)
+                : nil)
         return AudioAnalysisEventProvenance(
             backend: backend,
             eventSource: source,
             backendCommand: eventBackendCommand,
             backendUsed: eventBackendUsed,
-            failureSummary: eventBackendFailure.map(makeFallbackSummary(reason:))
+            failureSummary: failureSummary
         )
     }
 

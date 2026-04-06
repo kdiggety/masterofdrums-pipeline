@@ -180,7 +180,7 @@ The wrapper records the selected backend, fallback policy, validation mode, and 
 
 For CLI ergonomics, `validate-audio-analyzer` now also emits a short stderr summary line derived from the normalized analysis summary, and `list-artifacts` appends that same provenance-oriented summary for `audio_analysis` rows. That gives operators a quick read on backend selection / fallback behavior without having to open the artifact JSON first.
 
-When `scripts/hybrid-drum-events-backend.py` is used directly as the analyzer command, it also records `runtime.timingBackendCommand`, `runtime.eventBackendCommand`, `runtime.eventPolicy`, `runtime.eventBackendUsed`, and `runtime.eventBackendFailure` so merged timing/event experiments stay auditable in saved artifacts.
+When `scripts/hybrid-drum-events-backend.py` is used directly as the analyzer command, it also records `runtime.timingBackendCommand`, `runtime.eventBackendCommand`, `runtime.eventPolicy`, `runtime.eventBackendRan`, `runtime.eventBackendUsed`, `runtime.eventBackendCandidateCount`, and `runtime.eventBackendFailure` so merged timing/event experiments stay auditable in saved artifacts. In particular, `eventBackendRan=true` with `eventBackendUsed=false` means the stage-2 backend executed but did not contribute any usable drum-event candidates, which keeps timing-only outcomes distinguishable from genuine merged-event runs.
 
 ## Fast validation loop
 
