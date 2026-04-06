@@ -2,6 +2,8 @@
 
 This repo now has a more concrete story-5 loop: a small corpus fixture, an evaluator, and a regression-friendly report shape that can describe generated charts without snapshotting brittle full JSON artifacts.
 
+Wave 1 corpus expansion note: the fixture now includes both an awaiting-review template row and an approved-baseline real-clip exemplar so report output and tests exercise a more realistic review lifecycle instead of only synthetic scaffolding.
+
 This phase pushes the seam closer to real-clip usage by making the corpus manifest more review-oriented, adding lintable metadata expectations, and expanding the report so humans can tell what kind of set they are reviewing before drilling into note previews.
 
 ## What this slice adds
@@ -105,6 +107,9 @@ That is still intentionally compact, but it is now closer to a real review corpu
 - baseline metadata can record which chart or snapshot a human signed off on
 - review notes/checklists can capture why a clip exists and what future reviewers should watch for
 - missing generated charts are reported explicitly instead of silently skipped
+- the checked-in fixture now demonstrates two real-clip states on purpose:
+  - `real-review-template` as a pending-review placeholder
+  - `licensed-breakbeat-a` as an approved-baseline exemplar with focused-lane guardrails for kick/snare/closed-hat balance
 
 ## Corpus linting
 
@@ -201,7 +206,7 @@ For real clips, this is a better regression-review shape because:
 - `renderText()` output intended for regression assertions and future CLI printing
 - `operatorSummary` / `packagedReport()` helpers so wrappers or CI upload steps can carry a compact machine-readable status plus the full text report without inventing a second ad-hoc schema
 
-Example report shape:
+Example report shape (illustrative; the checked-in fixture now also includes an approved-baseline real clip exemplar, so live counts may be slightly larger):
 
 ```text
 corpus pass=1/3 failed=2 missing=2 tags=6 lint=0

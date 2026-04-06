@@ -86,6 +86,67 @@
           "minimumScore": 0.5
         }
       ]
+    },
+    {
+      "id": "licensed-breakbeat-a",
+      "title": "Licensed Breakbeat A",
+      "artist": "Internal Review Pack",
+      "sourceFixture": "review-set/licensed-breakbeat-a.wav",
+      "sourceType": "real_clip",
+      "sourceProvenance": "licensed internal breakbeat stem export approved for chart-eval regression use",
+      "clipDurationSeconds": 8.5,
+      "reviewStatus": "approved_baseline",
+      "baselineStatus": "approved_baseline",
+      "baselineChartID": "licensed-breakbeat-a--prototype--baseline-v1",
+      "notes": "Example of a review-ready real clip entry with an explicit approved baseline and dense backbeat/fill coverage.",
+      "reviewNotes": [
+        "Short stem excerpt with steady hats, backbeat snare, and a compact tom fill in the final bar.",
+        "Use this entry as the reference shape for future approved-baseline manifest rows."
+      ],
+      "reviewChecklist": [
+        "Check hats stay steady without exploding into overcharted subdivisions.",
+        "Check snare backbeats remain centered on beats 2 and 4.",
+        "Check the closing fill uses tom/crash lanes without losing kick anchors."
+      ],
+      "tags": ["smoke", "regression", "real_clip", "dense", "fills", "approved"],
+      "expectations": [
+        {
+          "difficulty": "prototype",
+          "noteCountRange": { "min": 10, "max": 40 },
+          "measureCountRange": { "min": 2, "max": 6 },
+          "requiredLanes": ["kick", "snare", "hihat_closed"],
+          "allowedLanes": ["kick", "snare", "hihat_closed", "tomHigh", "tomMid", "tomLow", "crash"],
+          "minDistinctLanes": 3,
+          "maxSimultaneousNotes": 2,
+          "maxNotesPerBeat": 4,
+          "maxNotesPerMeasure": 16,
+          "allowedEmptyMeasures": 0,
+          "minimumScore": 0.7,
+          "focusedLaneExpectations": [
+            {
+              "lane": "kick",
+              "shareRange": { "min": 0.15, "max": 0.40 },
+              "notesPerMeasureRange": { "min": 1.0, "max": 4.0 },
+              "minNoteCount": 2,
+              "maxNoteCount": 12
+            },
+            {
+              "lane": "snare",
+              "shareRange": { "min": 0.15, "max": 0.35 },
+              "notesPerMeasureRange": { "min": 1.0, "max": 3.0 },
+              "minNoteCount": 2,
+              "maxNoteCount": 10
+            },
+            {
+              "lane": "hihat_closed",
+              "shareRange": { "min": 0.25, "max": 0.65 },
+              "notesPerMeasureRange": { "min": 2.0, "max": 8.0 },
+              "minNoteCount": 4,
+              "maxNoteCount": 24
+            }
+          ]
+        }
+      ]
     }
   ]
 }

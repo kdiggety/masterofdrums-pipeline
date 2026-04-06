@@ -8,7 +8,7 @@ final class ChartQualityEvaluationTests: XCTestCase {
         let corpus = try JSONDecoder().decode(ChartEvaluationCorpus.self, from: data)
 
         XCTAssertEqual(corpus.schemaVersion, "1.3.0")
-        XCTAssertEqual(corpus.songs.count, 2)
+        XCTAssertEqual(corpus.songs.count, 3)
 
         let song = try XCTUnwrap(corpus.songs.first(where: { $0.id == "known-tone" }))
         XCTAssertEqual(song.sourceFixture, "known-tone.wav")
@@ -35,6 +35,20 @@ final class ChartQualityEvaluationTests: XCTestCase {
         XCTAssertEqual(realClip.reviewChecklist.count, 3)
         XCTAssertEqual(realClip.tags, ["regression", "real_clip", "fills"])
         XCTAssertEqual(realClip.expectations.count, 1)
+
+        let approvedClip = try XCTUnwrap(corpus.songs.first(where: { $0.id == "licensed-breakbeat-a" }))
+        XCTAssertEqual(approvedClip.sourceType, "real_clip")
+        XCTAssertEqual(approvedClip.reviewStatus, "approved_baseline")
+        XCTAssertEqual(approvedClip.baselineStatus, "approved_baseline")
+        XCTAssertEqual(approvedClip.baselineChartID, "licensed-breakbeat-a--prototype--baseline-v1")
+        XCTAssertEqual(try XCTUnwrap(approvedClip.clipDurationSeconds), 8.5, accuracy: 0.0001)
+        XCTAssertEqual(approvedClip.reviewNotes.count, 2)
+        XCTAssertEqual(approvedClip.reviewChecklist.count, 3)
+        XCTAssertEqual(approvedClip.tags, ["smoke", "regression", "real_clip", "dense", "fills", "approved"])
+        let approvedExpectation = try XCTUnwrap(approvedClip.expectations.first)
+        XCTAssertEqual(approvedExpectation.requiredLanes, [.kick, .snare, .hihatClosed])
+        XCTAssertEqual(approvedExpectation.focusedLaneExpectations.map(\.lane), [.kick, .snare, .hihatClosed])
+        XCTAssertEqual(approvedExpectation.focusedLaneExpectations.map(\.minNoteCount), [2, 2, 4])
     }
 
     func testCorpusLinterWarnsWhenRealClipMetadataIsIncomplete() {
@@ -98,6 +112,8 @@ final class ChartQualityEvaluationTests: XCTestCase {
         XCTAssertEqual(report.metrics.maxSimultaneousNotes, 1)
         XCTAssertEqual(report.metrics.maxNotesPerBeat, 1)
         XCTAssertEqual(report.metrics.maxNotesPerMeasure, 3)
+        XCTAssertEqual(report.metrics.maxConsecutiveSameLaneNotes, 1)
+        XCTAssertEqual(report.metrics.maxMeasureBurstiness, 1.0, accuracy: 0.0001)
         XCTAssertEqual(report.metrics.emptyMeasureCount, 0)
         XCTAssertEqual(report.metrics.averageNotesPerMeasure, 3.0, accuracy: 0.0001)
         XCTAssertEqual(report.metrics.laneUsage.count, 3)
@@ -116,6 +132,7 @@ final class ChartQualityEvaluationTests: XCTestCase {
         XCTAssertTrue(report.summary.contains("PASS"))
         XCTAssertTrue(report.regressionSummary.contains("note_preview"))
         XCTAssertTrue(report.regressionSummary.contains("measure_density m0=3"))
+        XCTAssertTrue(report.regressionSummary.contains("quality_flags same_lane_streak=1 measure_burstiness=1.00"))
         XCTAssertTrue(report.regressionSummary.contains("focused_lane_balance kick=1@0.33 snare=1@0.33 hihat_closed=1@0.33"))
     }
 
@@ -202,6 +219,43 @@ final class ChartQualityEvaluationTests: XCTestCase {
         XCTAssertEqual(report.score, 0.0, accuracy: 0.0001)
     }
 
+
+    func testEvaluatorFlagsSameLaneStreakAndMeasureBurstiness() {
+        let expectation = ChartQualityExpectation(
+            difficulty: "prototype",
+            noteCountRange: .init(min: 4, max: 8),
+            measureCountRange: .init(min: 2, max: 2),
+            requiredLanes: [.kick, .snare],
+            allowedLanes: [.kick, .snare],
+            minDistinctLanes: 2,
+            maxSimultaneousNotes: 1,
+            maxNotesPerBeat: 2,
+            maxNotesPerMeasure: 5,
+            maxConsecutiveSameLaneNotes: 2,
+            maxMeasureBurstiness: 1.40,
+            allowedEmptyMeasures: 0,
+            minimumScore: 0.8
+        )
+
+        let chart = makeChart(
+            difficulty: "prototype",
+            measures: 2,
+            notes: [
+                .init(lane: .kick, tick: 0, beatIndex: 0, startSeconds: 0.0),
+                .init(lane: .kick, tick: 240, beatIndex: 0, startSeconds: 0.25),
+                .init(lane: .kick, tick: 480, beatIndex: 1, startSeconds: 0.5),
+                .init(lane: .snare, tick: 960, beatIndex: 2, startSeconds: 1.0)
+            ]
+        )
+
+        let report = ChartQualityEvaluator.evaluate(chart: chart, against: expectation)
+        let codes = Set(report.issues.map(\.code))
+        XCTAssertEqual(report.metrics.maxConsecutiveSameLaneNotes, 3)
+        XCTAssertEqual(report.metrics.maxMeasureBurstiness, 1.5, accuracy: 0.0001)
+        XCTAssertTrue(codes.contains("same_lane_streak_too_long"))
+        XCTAssertFalse(codes.contains("measure_burstiness_too_high"))
+        XCTAssertTrue(report.regressionSummary.contains("quality_flags same_lane_streak=3 measure_burstiness=1.50"))
+    }
 
     func testEvaluatorFlagsFocusedLaneDistributionAndDensityDrift() {
         let expectation = ChartQualityExpectation(
