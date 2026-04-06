@@ -231,6 +231,15 @@ swift run MasterOfDrumsPipeline evaluate-chart-corpus \
 
 Chart files are discovered recursively from `--charts-dir` using the naming convention `<song-id>--<difficulty>.json` (or `__` as a separator). The report keeps the operator-facing text summary from the domain evaluator, including focused kick/snare/hi-hat balance, measure density, note previews, missing charts, and corpus pass/fail summaries. Add `--song-id <id>` to isolate one known track during review.
 
+For a lower-level look at analyzer label coverage vs final lane retention, use:
+
+```bash
+python3 scripts/audit-analyzer-lane-mapping.py /path/to/audio-analysis.json
+python3 scripts/audit-analyzer-lane-mapping.py /path/to/normalized-analysis.json /path/to/base-chart.json
+```
+
+That audit helper reports raw labels, mapped lane candidates, unmapped labels, normalized drum-event lane totals, base-chart lane totals, and any embedded `drumEventDiagnostics`. See `Docs/quality/analyzer-lane-mapping-audit.md` for the current audit findings and where kick/snare/hat/tom/crash loss is most likely happening.
+
 For a repeatable operator-facing smoke run that exercises the same CLI surface end to end with a bundled WAV fixture and a deterministic mock analyzer, use:
 
 ```bash
