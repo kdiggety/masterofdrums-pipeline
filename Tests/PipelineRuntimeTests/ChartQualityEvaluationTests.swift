@@ -253,7 +253,7 @@ final class ChartQualityEvaluationTests: XCTestCase {
         XCTAssertEqual(report.metrics.maxConsecutiveSameLaneNotes, 3)
         XCTAssertEqual(report.metrics.maxMeasureBurstiness, 1.5, accuracy: 0.0001)
         XCTAssertTrue(codes.contains("same_lane_streak_too_long"))
-        XCTAssertFalse(codes.contains("measure_burstiness_too_high"))
+        XCTAssertTrue(codes.contains("measure_burstiness_too_high"))
         XCTAssertTrue(report.regressionSummary.contains("quality_flags same_lane_streak=3 measure_burstiness=1.50"))
     }
 

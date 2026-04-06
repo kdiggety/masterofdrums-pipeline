@@ -72,6 +72,8 @@ public struct ChartQualityExpectation: Codable, Sendable {
     public let maxSimultaneousNotes: Int?
     public let maxNotesPerBeat: Int?
     public let maxNotesPerMeasure: Int?
+    public let maxConsecutiveSameLaneNotes: Int?
+    public let maxMeasureBurstiness: Double?
     public let allowedEmptyMeasures: Int?
     public let minimumScore: Double?
     public let focusedLaneExpectations: [FocusedLaneExpectation]
@@ -86,6 +88,8 @@ public struct ChartQualityExpectation: Codable, Sendable {
         maxSimultaneousNotes: Int? = nil,
         maxNotesPerBeat: Int? = nil,
         maxNotesPerMeasure: Int? = nil,
+        maxConsecutiveSameLaneNotes: Int? = nil,
+        maxMeasureBurstiness: Double? = nil,
         allowedEmptyMeasures: Int? = nil,
         minimumScore: Double? = nil,
         focusedLaneExpectations: [FocusedLaneExpectation] = []
@@ -99,6 +103,8 @@ public struct ChartQualityExpectation: Codable, Sendable {
         self.maxSimultaneousNotes = maxSimultaneousNotes
         self.maxNotesPerBeat = maxNotesPerBeat
         self.maxNotesPerMeasure = maxNotesPerMeasure
+        self.maxConsecutiveSameLaneNotes = maxConsecutiveSameLaneNotes
+        self.maxMeasureBurstiness = maxMeasureBurstiness
         self.allowedEmptyMeasures = allowedEmptyMeasures
         self.minimumScore = minimumScore
         self.focusedLaneExpectations = focusedLaneExpectations
@@ -171,6 +177,7 @@ public struct ChartQualityReport: Codable, Sendable {
             "lane_usage \(regressionSnapshot.laneUsage.map { "\($0.lane)=\($0.noteCount)" }.joined(separator: " "))",
             "focused_lane_balance \(focusedLaneText)",
             "measure_density \(regressionSnapshot.measureDensity.map { "m\($0.measureIndex)=\($0.noteCount)" }.joined(separator: " "))",
+            "quality_flags same_lane_streak=\(metrics.maxConsecutiveSameLaneNotes) measure_burstiness=\(Self.format(metrics.maxMeasureBurstiness))",
             "note_preview \(regressionSnapshot.notePreview.joined(separator: " | "))",
             "issues \(issueText)"
         ].joined(separator: "\n")
@@ -200,6 +207,8 @@ public struct ChartQualityMetrics: Codable, Sendable {
     public let maxSimultaneousNotes: Int
     public let maxNotesPerBeat: Int
     public let maxNotesPerMeasure: Int
+    public let maxConsecutiveSameLaneNotes: Int
+    public let maxMeasureBurstiness: Double
     public let emptyMeasureCount: Int
     public let averageNotesPerMeasure: Double
 
@@ -214,6 +223,8 @@ public struct ChartQualityMetrics: Codable, Sendable {
         maxSimultaneousNotes: Int,
         maxNotesPerBeat: Int,
         maxNotesPerMeasure: Int,
+        maxConsecutiveSameLaneNotes: Int,
+        maxMeasureBurstiness: Double,
         emptyMeasureCount: Int,
         averageNotesPerMeasure: Double
     ) {
@@ -227,6 +238,8 @@ public struct ChartQualityMetrics: Codable, Sendable {
         self.maxSimultaneousNotes = maxSimultaneousNotes
         self.maxNotesPerBeat = maxNotesPerBeat
         self.maxNotesPerMeasure = maxNotesPerMeasure
+        self.maxConsecutiveSameLaneNotes = maxConsecutiveSameLaneNotes
+        self.maxMeasureBurstiness = maxMeasureBurstiness
         self.emptyMeasureCount = emptyMeasureCount
         self.averageNotesPerMeasure = averageNotesPerMeasure
     }
@@ -1012,6 +1025,24 @@ public enum ChartQualityEvaluator {
             penalty += min(0.15, 0.03 * Double(metrics.maxNotesPerMeasure - maxNotesPerMeasure))
         }
 
+        if let maxConsecutiveSameLaneNotes = expectation.maxConsecutiveSameLaneNotes,
+           metrics.maxConsecutiveSameLaneNotes > maxConsecutiveSameLaneNotes {
+            issues.append(.init(
+                code: "same_lane_streak_too_long",
+                message: "Expected at most \(maxConsecutiveSameLaneNotes) consecutive notes on the same lane but saw \(metrics.maxConsecutiveSameLaneNotes)."
+            ))
+            penalty += min(0.15, 0.04 * Double(metrics.maxConsecutiveSameLaneNotes - maxConsecutiveSameLaneNotes))
+        }
+
+        if let maxMeasureBurstiness = expectation.maxMeasureBurstiness,
+           metrics.maxMeasureBurstiness > maxMeasureBurstiness {
+            issues.append(.init(
+                code: "measure_burstiness_too_high",
+                message: "Expected measure burstiness <= \(format(maxMeasureBurstiness)) but saw \(format(metrics.maxMeasureBurstiness))."
+            ))
+            penalty += proportionalPenalty(actual: metrics.maxMeasureBurstiness, expectedRange: DoubleRange(min: 0, max: maxMeasureBurstiness), cap: 0.15)
+        }
+
         if let allowedEmptyMeasures = expectation.allowedEmptyMeasures,
            metrics.emptyMeasureCount > allowedEmptyMeasures {
             issues.append(.init(
@@ -1097,6 +1128,8 @@ public enum ChartQualityEvaluator {
         let countedMeasures = Set(notesPerMeasure.keys.compactMap { $0 })
         let emptyMeasureCount = max(0, measureCount - countedMeasures.count)
         let averageNotesPerMeasure = measureCount > 0 ? Double(noteCount) / Double(measureCount) : 0
+        let maxMeasureBurstiness = averageNotesPerMeasure > 0 ? Double(maxNotesPerMeasure) / averageNotesPerMeasure : 0
+        let maxConsecutiveSameLaneNotes = longestSameLaneRun(in: chart.chart.notes)
 
         let laneUsage = Dictionary(grouping: chart.chart.notes, by: \.lane)
             .map { LaneUsageMetric(lane: $0.key, noteCount: $0.value.count) }
@@ -1140,6 +1173,8 @@ public enum ChartQualityEvaluator {
             maxSimultaneousNotes: maxSimultaneousNotes,
             maxNotesPerBeat: maxNotesPerBeat,
             maxNotesPerMeasure: maxNotesPerMeasure,
+            maxConsecutiveSameLaneNotes: maxConsecutiveSameLaneNotes,
+            maxMeasureBurstiness: maxMeasureBurstiness,
             emptyMeasureCount: emptyMeasureCount,
             averageNotesPerMeasure: averageNotesPerMeasure
         )
@@ -1180,6 +1215,31 @@ public enum ChartQualityEvaluator {
             }
         }
         return nil
+    }
+
+    private static func longestSameLaneRun(in notes: [BaseChartNote]) -> Int {
+        let orderedNotes = notes.sorted {
+            if $0.tick == $1.tick {
+                return $0.lane.rawValue < $1.lane.rawValue
+            }
+            return $0.tick < $1.tick
+        }
+
+        var best = 0
+        var currentLane: DrumLane?
+        var currentRun = 0
+
+        for note in orderedNotes {
+            if note.lane == currentLane {
+                currentRun += 1
+            } else {
+                currentLane = note.lane
+                currentRun = 1
+            }
+            best = max(best, currentRun)
+        }
+
+        return best
     }
 
     private static func proportionalPenalty(actual: Int, expectedRange: IntRange, cap: Double) -> Double {
