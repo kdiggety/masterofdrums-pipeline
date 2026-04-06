@@ -916,13 +916,20 @@ public enum ChartMetricsComparator {
             )
         }
 
+        let baselinePreview = Set(baseline.regressionSnapshot.notePreview)
+        let candidatePreview = Set(candidate.regressionSnapshot.notePreview)
+        let previewAdded = candidatePreview.subtracting(baselinePreview).sorted()
+        let previewRemoved = baselinePreview.subtracting(candidatePreview).sorted()
+
         return ChartMetricsComparison(
             baselineDifficulty: baseline.difficulty,
             candidateDifficulty: candidate.difficulty,
             noteCountDelta: candidate.metrics.noteCount - baseline.metrics.noteCount,
             measureCountDelta: candidate.metrics.measureCount - baseline.metrics.measureCount,
             averageNotesPerMeasureDelta: candidate.metrics.averageNotesPerMeasure - baseline.metrics.averageNotesPerMeasure,
-            focusedLaneDeltas: focusedLaneDeltas
+            focusedLaneDeltas: focusedLaneDeltas,
+            previewAdded: previewAdded,
+            previewRemoved: previewRemoved
         )
     }
 }
