@@ -144,6 +144,8 @@ Given a `BaseChartContract`, the evaluator computes:
 - maximum simultaneous notes at one tick
 - maximum notes inside one beat
 - maximum notes inside one measure
+- longest same-lane streak across the chart (`maxConsecutiveSameLaneNotes`)
+- measure burstiness as `busiest_measure_density / average_measure_density` (`maxMeasureBurstiness`)
 - empty measure count
 - average notes per measure
 
@@ -312,5 +314,7 @@ The evaluator still uses the same domain scoring/reporting path, but expectation
 - snare share / notes-per-measure range
 - hi-hat share / notes-per-measure range
 - per-lane min/max note-count guardrails
+- `maxConsecutiveSameLaneNotes` to catch repeated-pattern fatigue like long kick-only or hi-hat-only runs
+- `maxMeasureBurstiness` to catch one measure suddenly getting much denser than the rest of the chart
 
 That makes the harness better at flagging obvious misses and suspicious over-generation even when a chart still technically contains the required lanes.

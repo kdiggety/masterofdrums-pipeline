@@ -224,12 +224,13 @@ For repeatable drum-event quality review on known tracks, you can now export gen
 swift run MasterOfDrumsPipeline evaluate-chart-corpus \
   --corpus Tests/PipelineRuntimeTests/Fixtures/chart-eval-corpus.json \
   --charts-dir ./tmp/chart-eval \
+  --baseline-charts-dir ./tmp/chart-eval-baseline \
   --tag smoke \
   --output-path ./tmp/chart-eval/report.json \
   --text-output-path ./tmp/chart-eval/report.txt
 ```
 
-Chart files are discovered recursively from `--charts-dir` using the naming convention `<song-id>--<difficulty>.json` (or `__` as a separator). The report keeps the operator-facing text summary from the domain evaluator, including focused kick/snare/hi-hat balance, measure density, note previews, missing charts, and corpus pass/fail summaries. Add `--song-id <id>` to isolate one known track during review.
+Chart files are discovered recursively from `--charts-dir` using the naming convention `<song-id>--<difficulty>.json` (or `__` as a separator). When `--baseline-charts-dir` is present, matching charts from that directory are compared against the candidate set and the text/JSON report includes compact delta lines for note count, density, focused kick/snare/hat balance, and a small added/removed note-preview surface. Add `--song-id <id>` to isolate one known track during review.
 
 For a lower-level look at analyzer label coverage vs final lane retention, use:
 

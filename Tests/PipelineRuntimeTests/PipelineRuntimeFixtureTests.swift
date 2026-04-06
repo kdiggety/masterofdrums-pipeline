@@ -174,7 +174,7 @@ final class PipelineRuntimeFixtureTests: XCTestCase {
         XCTAssertEqual(corpusReport.lintIssues.count, 0)
 
         let reportText = corpusReport.renderText()
-        XCTAssertTrue(reportText.contains("corpus pass=1/4 failed=3 missing=3 tags=8 lint=0"))
+        XCTAssertTrue(reportText.contains("corpus pass=1/4 failed=3 missing=3 comparisons=0 tags=8 lint=0"))
         XCTAssertTrue(reportText.contains("source_summary fixture_audio=1 real_clip=2"))
         XCTAssertTrue(reportText.contains("review_summary approved_baseline=1 awaiting_baseline_review=1 synthetic_smoke=1"))
         XCTAssertTrue(reportText.contains("baseline_summary approved_baseline=1 pending_review=1 prototype_fixture=1"))

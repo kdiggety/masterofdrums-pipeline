@@ -9,6 +9,7 @@ final class ChartCorpusEvaluatorHarnessTests: XCTestCase {
             "evaluate-chart-corpus",
             "--corpus", "/tmp/corpus.json",
             "--charts-dir", "/tmp/charts",
+            "--baseline-charts-dir", "/tmp/baseline-charts",
             "--song-id", "known-tone",
             "--tag", "smoke",
             "--output-path", "/tmp/report.json",
@@ -20,6 +21,7 @@ final class ChartCorpusEvaluatorHarnessTests: XCTestCase {
             .evaluateChartCorpus(
                 corpusPath: "/tmp/corpus.json",
                 chartsDirectory: "/tmp/charts",
+                baselineChartsDirectory: "/tmp/baseline-charts",
                 songID: "known-tone",
                 tag: "smoke",
                 outputPath: "/tmp/report.json",
@@ -88,9 +90,22 @@ final class ChartCorpusEvaluatorHarnessTests: XCTestCase {
         )
         try JSONEncoder.pipeline.encode(chart).write(to: chartsDir.appendingPathComponent("known-tone--prototype.json"))
 
+        let baselineChartsDir = tempRoot.appendingPathComponent("baseline-charts", isDirectory: true)
+        try FileManager.default.createDirectory(at: baselineChartsDir, withIntermediateDirectories: true)
+        let baselineChart = makeChart(
+            difficulty: "prototype",
+            measures: 1,
+            notes: [
+                .init(lane: .kick, tick: 0, beatIndex: 0, startSeconds: 0.0),
+                .init(lane: .snare, tick: 480, beatIndex: 1, startSeconds: 0.5)
+            ]
+        )
+        try JSONEncoder.pipeline.encode(baselineChart).write(to: baselineChartsDir.appendingPathComponent("known-tone--prototype.json"))
+
         let packaged = try ChartCorpusEvaluatorHarness.evaluate(
             corpusURL: corpusURL,
             chartsDirectoryURL: chartsDir,
+            baselineChartsDirectoryURL: baselineChartsDir,
             selection: .init(songID: "known-tone", tag: "smoke")
         )
 
@@ -98,8 +113,11 @@ final class ChartCorpusEvaluatorHarnessTests: XCTestCase {
         XCTAssertEqual(packaged.summary.passedExpectations, 1)
         XCTAssertEqual(packaged.summary.failedExpectations, 0)
         XCTAssertEqual(packaged.report.results.count, 1)
+        XCTAssertEqual(packaged.report.comparisonCount, 1)
         XCTAssertTrue(packaged.text.contains("known-tone [prototype] PASS"))
         XCTAssertFalse(packaged.text.contains("other-song"))
+        XCTAssertTrue(packaged.text.contains("compare baseline=prototype candidate=prototype notes=+1 measures=+0 avg_notes_per_measure=+1.00"))
+        XCTAssertTrue(packaged.text.contains("preview_added=tick=960:beat=2:sub=nil:lane=hihat_closed:vel=1.00"))
         XCTAssertTrue(packaged.text.contains("focused_lane_balance kick=1@0.33 snare=1@0.33 hihat_closed=1@0.33"))
     }
 

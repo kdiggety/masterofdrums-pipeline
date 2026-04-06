@@ -371,6 +371,9 @@ final class ChartQualityEvaluationTests: XCTestCase {
         XCTAssertTrue(comparison.summary.contains("kick=+1@+0.08"))
         XCTAssertTrue(comparison.summary.contains("snare=+0@-0.08"))
         XCTAssertTrue(comparison.summary.contains("hihat_closed=+1@+0.00"))
+        XCTAssertTrue(comparison.summary.contains("preview_added="))
+        XCTAssertEqual(comparison.previewAdded.count, 4)
+        XCTAssertEqual(comparison.previewRemoved.count, 0)
     }
 
     func testCorpusRunnerProducesStableRegressionFriendlyTextReport() {
@@ -438,7 +441,7 @@ final class ChartQualityEvaluationTests: XCTestCase {
         XCTAssertEqual(report.lintIssues.count, 0)
 
         let text = report.renderText()
-        XCTAssertTrue(text.contains("corpus pass=1/1 failed=0 missing=0 tags=2 lint=0"))
+        XCTAssertTrue(text.contains("corpus pass=1/1 failed=0 missing=0 comparisons=0 tags=2 lint=0"))
         XCTAssertTrue(text.contains("source_summary real_clip=1"))
         XCTAssertTrue(text.contains("review_summary approved_baseline=1"))
         XCTAssertTrue(text.contains("baseline_summary approved_baseline=1"))

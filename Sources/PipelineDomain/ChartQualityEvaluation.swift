@@ -369,6 +369,7 @@ public struct ChartEvaluationResult: Codable, Sendable {
     public let baselineChartID: String?
     public let report: ChartQualityReport
     public let expectation: ChartQualityExpectation
+    public let comparison: ChartMetricsComparison?
 
     public var summaryLine: String {
         let durationText = clipDurationSeconds.map { String(format: "%.2fs", $0) } ?? "unknown"
@@ -395,7 +396,8 @@ public struct ChartEvaluationResult: Codable, Sendable {
         baselineStatus: String?,
         baselineChartID: String?,
         expectation: ChartQualityExpectation,
-        report: ChartQualityReport
+        report: ChartQualityReport,
+        comparison: ChartMetricsComparison? = nil
     ) {
         self.songID = songID
         self.songTitle = songTitle
@@ -409,6 +411,7 @@ public struct ChartEvaluationResult: Codable, Sendable {
         self.baselineChartID = baselineChartID
         self.expectation = expectation
         self.report = report
+        self.comparison = comparison
     }
 }
 
@@ -518,6 +521,7 @@ public struct ChartEvaluationCorpusReport: Codable, Sendable {
     public let failedExpectations: Int
     public let results: [ChartEvaluationResult]
     public let missingCharts: [String]
+    public let comparisonCount: Int
     public let tagSummaries: [CorpusTagSummary]
     public let difficultySummaries: [CorpusDifficultySummary]
     public let sourceTypeSummaries: [CorpusValueSummary]
@@ -530,7 +534,7 @@ public struct ChartEvaluationCorpusReport: Codable, Sendable {
     }
 
     public var summary: String {
-        "corpus pass=\(passedExpectations)/\(totalExpectations) failed=\(failedExpectations) missing=\(missingCharts.count) tags=\(tagSummaries.count) lint=\(lintIssues.count)"
+        "corpus pass=\(passedExpectations)/\(totalExpectations) failed=\(failedExpectations) missing=\(missingCharts.count) comparisons=\(comparisonCount) tags=\(tagSummaries.count) lint=\(lintIssues.count)"
     }
 
     public var operatorSummary: ChartEvaluationCorpusOperatorSummary {
@@ -587,6 +591,9 @@ public struct ChartEvaluationCorpusReport: Codable, Sendable {
             if let provenanceLine = result.provenanceLine {
                 lines.append(provenanceLine)
             }
+            if let comparison = result.comparison {
+                lines.append(comparison.summary)
+            }
             lines.append(result.report.regressionSummary)
         }
         if !missingCharts.isEmpty {
@@ -603,6 +610,7 @@ public struct ChartEvaluationCorpusReport: Codable, Sendable {
         failedExpectations: Int,
         results: [ChartEvaluationResult],
         missingCharts: [String],
+        comparisonCount: Int,
         tagSummaries: [CorpusTagSummary],
         difficultySummaries: [CorpusDifficultySummary],
         sourceTypeSummaries: [CorpusValueSummary],
@@ -617,6 +625,7 @@ public struct ChartEvaluationCorpusReport: Codable, Sendable {
         self.failedExpectations = failedExpectations
         self.results = results
         self.missingCharts = missingCharts
+        self.comparisonCount = comparisonCount
         self.tagSummaries = tagSummaries
         self.difficultySummaries = difficultySummaries
         self.sourceTypeSummaries = sourceTypeSummaries
@@ -683,16 +692,19 @@ public enum ChartEvaluationRunner {
     public static func evaluate(
         corpus: ChartEvaluationCorpus,
         generatedCharts: [String: [String: BaseChartContract]],
+        baselineCharts: [String: [String: BaseChartContract]] = [:],
         generatedAt: Date = Date()
     ) -> ChartEvaluationCorpusReport {
         var results: [ChartEvaluationResult] = []
         var missingCharts: [String] = []
+        var comparisonCount = 0
         var tagStats: [String: (total: Int, passed: Int)] = [:]
         var difficultyStats: [String: (total: Int, passed: Int, missing: Int)] = [:]
         let lintIssues = ChartEvaluationCorpusLinter.lint(corpus)
 
         for song in corpus.songs {
             let chartsForSong = generatedCharts[song.id] ?? [:]
+            let baselineChartsForSong = baselineCharts[song.id] ?? [:]
             for expectation in song.expectations {
                 for tag in song.tags {
                     let current = tagStats[tag] ?? (0, 0)
@@ -708,6 +720,13 @@ public enum ChartEvaluationRunner {
                     continue
                 }
                 let report = ChartQualityEvaluator.evaluate(chart: chart, against: expectation)
+                let comparison = baselineChartsForSong[expectation.difficulty].map {
+                    let baselineReport = ChartQualityEvaluator.evaluate(chart: $0, against: expectation)
+                    return ChartMetricsComparator.compare(baseline: baselineReport, candidate: report)
+                }
+                if comparison != nil {
+                    comparisonCount += 1
+                }
                 if report.passed {
                     for tag in song.tags {
                         let current = tagStats[tag] ?? (0, 0)
@@ -729,7 +748,8 @@ public enum ChartEvaluationRunner {
                         baselineStatus: song.baselineStatus,
                         baselineChartID: song.baselineChartID,
                         expectation: expectation,
-                        report: report
+                        report: report,
+                        comparison: comparison
                     )
                 )
             }
@@ -766,6 +786,7 @@ public enum ChartEvaluationRunner {
             failedExpectations: failedExpectations,
             results: results,
             missingCharts: missingCharts.sorted(),
+            comparisonCount: comparisonCount,
             tagSummaries: tagSummaries,
             difficultySummaries: difficultySummaries,
             sourceTypeSummaries: summarizeValues(corpus.songs.map(\.sourceType)),
@@ -789,6 +810,8 @@ public struct ChartMetricsComparison: Codable, Sendable {
     public let measureCountDelta: Int
     public let averageNotesPerMeasureDelta: Double
     public let focusedLaneDeltas: [FocusedLaneDelta]
+    public let previewAdded: [String]
+    public let previewRemoved: [String]
 
     public var summary: String {
         let laneText = focusedLaneDeltas.isEmpty
@@ -801,7 +824,9 @@ public struct ChartMetricsComparison: Codable, Sendable {
         let noteDelta = noteCountDelta >= 0 ? "+\(noteCountDelta)" : "\(noteCountDelta)"
         let measureDelta = measureCountDelta >= 0 ? "+\(measureCountDelta)" : "\(measureCountDelta)"
         let densityDelta = averageNotesPerMeasureDelta >= 0 ? "+\(Self.format(averageNotesPerMeasureDelta))" : Self.format(averageNotesPerMeasureDelta)
-        return "compare baseline=\(baselineDifficulty) candidate=\(candidateDifficulty) notes=\(noteDelta) measures=\(measureDelta) avg_notes_per_measure=\(densityDelta) focused=\(laneText)"
+        let previewAddedText = previewAdded.isEmpty ? "none" : previewAdded.joined(separator: " | ")
+        let previewRemovedText = previewRemoved.isEmpty ? "none" : previewRemoved.joined(separator: " | ")
+        return "compare baseline=\(baselineDifficulty) candidate=\(candidateDifficulty) notes=\(noteDelta) measures=\(measureDelta) avg_notes_per_measure=\(densityDelta) focused=\(laneText) preview_added=\(previewAddedText) preview_removed=\(previewRemovedText)"
     }
 
     public init(
@@ -810,7 +835,9 @@ public struct ChartMetricsComparison: Codable, Sendable {
         noteCountDelta: Int,
         measureCountDelta: Int,
         averageNotesPerMeasureDelta: Double,
-        focusedLaneDeltas: [FocusedLaneDelta]
+        focusedLaneDeltas: [FocusedLaneDelta],
+        previewAdded: [String],
+        previewRemoved: [String]
     ) {
         self.baselineDifficulty = baselineDifficulty
         self.candidateDifficulty = candidateDifficulty
@@ -818,6 +845,8 @@ public struct ChartMetricsComparison: Codable, Sendable {
         self.measureCountDelta = measureCountDelta
         self.averageNotesPerMeasureDelta = averageNotesPerMeasureDelta
         self.focusedLaneDeltas = focusedLaneDeltas
+        self.previewAdded = previewAdded
+        self.previewRemoved = previewRemoved
     }
 
     private static func format(_ value: Double) -> String {
