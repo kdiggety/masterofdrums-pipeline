@@ -8,7 +8,7 @@ final class ChartQualityEvaluationTests: XCTestCase {
         let corpus = try JSONDecoder().decode(ChartEvaluationCorpus.self, from: data)
 
         XCTAssertEqual(corpus.schemaVersion, "1.3.0")
-        XCTAssertEqual(corpus.songs.count, 3)
+        XCTAssertEqual(corpus.songs.count, 6)
 
         let song = try XCTUnwrap(corpus.songs.first(where: { $0.id == "known-tone" }))
         XCTAssertEqual(song.sourceFixture, "known-tone.wav")
@@ -49,6 +49,28 @@ final class ChartQualityEvaluationTests: XCTestCase {
         XCTAssertEqual(approvedExpectation.requiredLanes, [.kick, .snare, .hihatClosed])
         XCTAssertEqual(approvedExpectation.focusedLaneExpectations.map(\.lane), [.kick, .snare, .hihatClosed])
         XCTAssertEqual(approvedExpectation.focusedLaneExpectations.map(\.minNoteCount), [2, 2, 4])
+
+        let syncopatedClip = try XCTUnwrap(corpus.songs.first(where: { $0.id == "syncopated-hats-b" }))
+        XCTAssertEqual(syncopatedClip.reviewStatus, "candidate_regression")
+        XCTAssertEqual(syncopatedClip.baselineStatus, "candidate_baseline")
+        XCTAssertEqual(syncopatedClip.tags, ["regression", "real_clip", "syncopated", "dense", "hihat"])
+        let syncopatedExpectation = try XCTUnwrap(syncopatedClip.expectations.first)
+        XCTAssertEqual(syncopatedExpectation.maxConsecutiveSameLaneNotes, 6)
+        XCTAssertEqual(try XCTUnwrap(syncopatedExpectation.maxMeasureBurstiness), 1.8, accuracy: 0.0001)
+        XCTAssertEqual(syncopatedExpectation.focusedLaneExpectations.map(\.lane), [.kick, .snare, .hihatClosed])
+
+        let transitionClip = try XCTUnwrap(corpus.songs.first(where: { $0.id == "tom-crash-transition-c" }))
+        XCTAssertEqual(transitionClip.tags, ["regression", "real_clip", "fills", "toms", "crash", "transitions"])
+        let transitionExpectation = try XCTUnwrap(transitionClip.expectations.first)
+        XCTAssertEqual(transitionExpectation.requiredLanes, [.kick, .tomMid, .crash])
+        XCTAssertEqual(transitionExpectation.maxConsecutiveSameLaneNotes, 4)
+
+        let dynamicsClip = try XCTUnwrap(corpus.songs.first(where: { $0.id == "sparse-dense-dynamics-d" }))
+        XCTAssertEqual(dynamicsClip.tags, ["regression", "real_clip", "sparse", "dense", "transitions", "crash"])
+        let dynamicsExpectation = try XCTUnwrap(dynamicsClip.expectations.first)
+        XCTAssertEqual(dynamicsExpectation.maxConsecutiveSameLaneNotes, 5)
+        XCTAssertEqual(try XCTUnwrap(dynamicsExpectation.maxMeasureBurstiness), 2.4, accuracy: 0.0001)
+        XCTAssertEqual(dynamicsExpectation.focusedLaneExpectations.map(\.lane), [.kick, .snare, .hihatClosed])
     }
 
     func testCorpusLinterWarnsWhenRealClipMetadataIsIncomplete() {

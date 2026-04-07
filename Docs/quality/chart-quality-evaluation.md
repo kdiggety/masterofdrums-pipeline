@@ -4,6 +4,8 @@ This repo now has a more concrete story-5 loop: a small corpus fixture, an evalu
 
 Wave 1 corpus expansion note: the fixture now includes both an awaiting-review template row and an approved-baseline real-clip exemplar so report output and tests exercise a more realistic review lifecycle instead of only synthetic scaffolding.
 
+Wave 2 coverage note: the checked-in corpus also now carries manifest-only real-clip rows for syncopated hi-hat grooves, tom/crash transition fills, and sparse-to-dense section changes, so remaining weak musical cases have explicit metadata, checklist targets, and expectation envelopes even before more licensed audio lands.
+
 This phase pushes the seam closer to real-clip usage by making the corpus manifest more review-oriented, adding lintable metadata expectations, and expanding the report so humans can tell what kind of set they are reviewing before drilling into note previews.
 
 ## What this slice adds

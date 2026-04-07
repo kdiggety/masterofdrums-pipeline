@@ -147,6 +147,178 @@
           ]
         }
       ]
+    },
+    {
+      "id": "syncopated-hats-b",
+      "title": "Syncopated Hats B",
+      "artist": "Internal Review Pack",
+      "sourceFixture": "review-set/syncopated-hats-b.wav",
+      "sourceType": "real_clip",
+      "sourceProvenance": "licensed internal groove excerpt with off-beat hi-hat accents and kick displacement",
+      "clipDurationSeconds": 9.0,
+      "reviewStatus": "candidate_regression",
+      "baselineStatus": "candidate_baseline",
+      "notes": "Manifest-only syncopated groove entry meant to catch off-beat hat pruning and kick/snare re-centering drift.",
+      "reviewNotes": [
+        "Primary risk is the shaping stage straightening the groove into plain quarter-note hats and square kick placement.",
+        "Keep expectation wide on total note count but explicit on hat presence and anti-monotony constraints."
+      ],
+      "reviewChecklist": [
+        "Check syncopated hats survive without collapsing to only downbeats.",
+        "Check kick anchors stay displaced instead of snapping to a generic rock pattern.",
+        "Check same-lane streaks do not turn into long unbroken hat walls."
+      ],
+      "tags": ["regression", "real_clip", "syncopated", "dense", "hihat"],
+      "expectations": [
+        {
+          "difficulty": "prototype",
+          "noteCountRange": { "min": 12, "max": 36 },
+          "measureCountRange": { "min": 2, "max": 6 },
+          "requiredLanes": ["kick", "snare", "hihat_closed"],
+          "allowedLanes": ["kick", "snare", "hihat_closed", "crash", "ride"],
+          "minDistinctLanes": 3,
+          "maxSimultaneousNotes": 2,
+          "maxNotesPerBeat": 3,
+          "maxNotesPerMeasure": 14,
+          "maxConsecutiveSameLaneNotes": 6,
+          "maxMeasureBurstiness": 1.8,
+          "allowedEmptyMeasures": 0,
+          "minimumScore": 0.68,
+          "focusedLaneExpectations": [
+            {
+              "lane": "kick",
+              "shareRange": { "min": 0.12, "max": 0.35 },
+              "notesPerMeasureRange": { "min": 1.0, "max": 3.0 },
+              "minNoteCount": 2,
+              "maxNoteCount": 10
+            },
+            {
+              "lane": "snare",
+              "shareRange": { "min": 0.12, "max": 0.30 },
+              "notesPerMeasureRange": { "min": 0.8, "max": 2.5 },
+              "minNoteCount": 2,
+              "maxNoteCount": 8
+            },
+            {
+              "lane": "hihat_closed",
+              "shareRange": { "min": 0.35, "max": 0.70 },
+              "notesPerMeasureRange": { "min": 2.5, "max": 8.0 },
+              "minNoteCount": 6,
+              "maxNoteCount": 22
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tom-crash-transition-c",
+      "title": "Tom Crash Transition C",
+      "artist": "Internal Review Pack",
+      "sourceFixture": "review-set/tom-crash-transition-c.wav",
+      "sourceType": "real_clip",
+      "sourceProvenance": "licensed internal transition clip with tom descent into crash-led downbeat",
+      "clipDurationSeconds": 7.5,
+      "reviewStatus": "awaiting_baseline_review",
+      "baselineStatus": "pending_review",
+      "notes": "Manifest-only transition clip targeting tom-heavy fills and crash punctuation at section boundaries.",
+      "reviewNotes": [
+        "Current weak spot is tom material being flattened back into snare/kick or losing the crash punctuation after the fill.",
+        "The expectation intentionally requires at least one tom lane so future real-baseline work has a concrete gate."
+      ],
+      "reviewChecklist": [
+        "Check tom lanes appear during the fill instead of all notes collapsing to snare.",
+        "Check the section-entry crash survives and does not get mistaken for a regular hat pulse.",
+        "Check kick support remains present beneath the transition."
+      ],
+      "tags": ["regression", "real_clip", "fills", "toms", "crash", "transitions"],
+      "expectations": [
+        {
+          "difficulty": "prototype",
+          "noteCountRange": { "min": 8, "max": 28 },
+          "measureCountRange": { "min": 2, "max": 5 },
+          "requiredLanes": ["kick", "tomMid", "crash"],
+          "allowedLanes": ["kick", "snare", "hihat_closed", "tomHigh", "tomMid", "tomLow", "crash"],
+          "minDistinctLanes": 3,
+          "maxSimultaneousNotes": 2,
+          "maxNotesPerBeat": 4,
+          "maxNotesPerMeasure": 14,
+          "maxConsecutiveSameLaneNotes": 4,
+          "maxMeasureBurstiness": 2.2,
+          "allowedEmptyMeasures": 0,
+          "minimumScore": 0.62,
+          "focusedLaneExpectations": [
+            {
+              "lane": "kick",
+              "shareRange": { "min": 0.08, "max": 0.30 },
+              "notesPerMeasureRange": { "min": 0.5, "max": 2.5 },
+              "minNoteCount": 1,
+              "maxNoteCount": 6
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sparse-dense-dynamics-d",
+      "title": "Sparse Dense Dynamics D",
+      "artist": "Internal Review Pack",
+      "sourceFixture": "review-set/sparse-dense-dynamics-d.wav",
+      "sourceType": "real_clip",
+      "sourceProvenance": "licensed internal verse-to-chorus excerpt with sparse opening and denser chorus lift",
+      "clipDurationSeconds": 11.0,
+      "reviewStatus": "candidate_regression",
+      "baselineStatus": "candidate_baseline",
+      "notes": "Manifest-only dynamics clip focused on section contrast so future tuning can tell whether sparse passages stay sparse while denser sections still open up.",
+      "reviewNotes": [
+        "Use this entry to catch the common failure mode where everything gets normalized to the same density regardless of section energy.",
+        "Burstiness is allowed but bounded so the chorus can open up without one bar becoming unreadable."
+      ],
+      "reviewChecklist": [
+        "Check the sparse opening keeps breathing room instead of filling every beat with hats.",
+        "Check the denser section clearly adds activity and crash punctuation.",
+        "Check the contrast reads as section growth rather than random overcharting."
+      ],
+      "tags": ["regression", "real_clip", "sparse", "dense", "transitions", "crash"],
+      "expectations": [
+        {
+          "difficulty": "prototype",
+          "noteCountRange": { "min": 10, "max": 34 },
+          "measureCountRange": { "min": 3, "max": 8 },
+          "requiredLanes": ["kick", "snare", "crash"],
+          "allowedLanes": ["kick", "snare", "hihat_closed", "crash", "ride"],
+          "minDistinctLanes": 3,
+          "maxSimultaneousNotes": 2,
+          "maxNotesPerBeat": 3,
+          "maxNotesPerMeasure": 12,
+          "maxConsecutiveSameLaneNotes": 5,
+          "maxMeasureBurstiness": 2.4,
+          "allowedEmptyMeasures": 1,
+          "minimumScore": 0.64,
+          "focusedLaneExpectations": [
+            {
+              "lane": "kick",
+              "shareRange": { "min": 0.12, "max": 0.35 },
+              "notesPerMeasureRange": { "min": 0.8, "max": 3.0 },
+              "minNoteCount": 2,
+              "maxNoteCount": 10
+            },
+            {
+              "lane": "snare",
+              "shareRange": { "min": 0.10, "max": 0.28 },
+              "notesPerMeasureRange": { "min": 0.6, "max": 2.5 },
+              "minNoteCount": 2,
+              "maxNoteCount": 8
+            },
+            {
+              "lane": "hihat_closed",
+              "shareRange": { "min": 0.15, "max": 0.55 },
+              "notesPerMeasureRange": { "min": 1.0, "max": 5.0 },
+              "minNoteCount": 3,
+              "maxNoteCount": 16
+            }
+          ]
+        }
+      ]
     }
   ]
 }
