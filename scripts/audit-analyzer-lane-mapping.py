@@ -6,14 +6,14 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
-KICK = {"kick", "bd", "bass_drum", "bassdrum", "bass_drum_1", "bass_drum_2", "bassdrum_1", "bassdrum_2", "kik", "kick_drum"}
-SNARE = {"snare", "sd", "sn", "rimshot", "rim", "cross_stick", "side_stick", "sidestick"}
-HH_CLOSED = {"hihat_closed", "closed_hihat", "closed_hat", "closed_hi_hat", "hhc", "hat_closed", "hi_hat_closed", "chh", "hh", "hihat"}
-HH_OPEN = {"hihat_open", "open_hihat", "open_hat", "open_hi_hat", "hho", "hat_open", "hi_hat_open", "ohh"}
-TOM_LOW = {"tom_low", "low_tom", "floor_tom", "floortom", "tom_3"}
-TOM_MID = {"tom_mid", "mid_tom", "middle_tom", "mid_tom_1", "tom_medium", "tom_2"}
-TOM_HIGH = {"tom_high", "high_tom", "rack_tom", "racktom", "tom_1"}
-CRASH = {"crash", "crash_cymbal", "crash_left", "crash_right", "crash_1", "crash_2", "china"}
+KICK = {"kick", "bd", "bass_drum", "bassdrum", "bass_drum_1", "bass_drum_2", "bassdrum_1", "bassdrum_2", "kik", "kick_drum", "kickdrum"}
+SNARE = {"snare", "sd", "sn", "rimshot", "rim", "cross_stick", "side_stick", "sidestick", "snare_drum", "snaredrum", "rim_shot"}
+HH_CLOSED = {"hihat_closed", "closed_hihat", "closed_hat", "closed_hi_hat", "hhc", "hat_closed", "hi_hat_closed", "chh", "hh", "hihat", "closed_hi_hat_edge", "tight_hihat", "tight_hi_hat"}
+HH_OPEN = {"hihat_open", "open_hihat", "open_hat", "open_hi_hat", "hho", "hat_open", "hi_hat_open", "ohh", "half_open_hihat", "half_open_hi_hat", "open_hi_hat_edge"}
+TOM_LOW = {"tom_low", "low_tom", "floor_tom", "floortom", "low_floor_tom", "high_floor_tom", "floor_tom_1", "floor_tom_2", "tom_3"}
+TOM_MID = {"tom_mid", "mid_tom", "middle_tom", "mid_tom_1", "mid_tom_2", "tom_medium", "medium_tom", "rack_tom_2", "tom_2"}
+TOM_HIGH = {"tom_high", "high_tom", "rack_tom", "racktom", "high_rack_tom", "rack_tom_1", "tom_1"}
+CRASH = {"crash", "crash_cymbal", "crash_left", "crash_right", "crash_1", "crash_2", "china", "china_cymbal", "splash", "splash_cymbal"}
 RIDE = {"ride", "ride_cymbal", "ride_bell", "ride_1", "ride_2"}
 CLAP = {"clap", "handclap", "hand_clap"}
 PERC = {"percussion", "perc", "cowbell", "shaker", "tambourine"}

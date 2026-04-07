@@ -281,6 +281,7 @@ def classify_event(samples: list[float], sample_rate: int, onset_seconds: float)
     tail_end = min(len(samples), center + int(0.09 * sample_rate))
     tail = samples[tail_start:tail_end] or [0.0]
     tail_energy = sum(abs(sample) for sample in tail) / len(tail)
+    sustain_ratio = tail_energy / max(1e-6, avg_abs)
     punch_ratio = avg_abs / max(1e-6, tail_energy)
 
     low_window = window[:: max(1, sample_rate // 220)]
@@ -291,13 +292,27 @@ def classify_event(samples: list[float], sample_rate: int, onset_seconds: float)
     mid_motion = sum(mid_diff) / len(mid_diff)
     bass_ratio = avg_abs / max(1e-6, low_motion)
     mid_ratio = mid_motion / max(1e-6, avg_abs)
+    spectral_balance = mid_motion / max(1e-6, low_motion)
 
     if (zcr < 0.14 and punch_ratio > 1.01 and bass_ratio > 1.03) or (zcr < 0.09 and punch_ratio > 0.98):
         confidence = min(0.99, 0.48 + avg_abs * 1.15 + max(0.0, bass_ratio - 1.0) * 0.32)
         return "kick", "kick", confidence
+    if zcr > 0.46 and sustain_ratio > 0.8 and avg_abs > 0.18:
+        confidence = min(0.99, 0.46 + min(zcr, 0.65) * 0.48 + min(sustain_ratio, 1.4) * 0.16)
+        return "crash", "crash", confidence
+    if zcr > 0.33 and sustain_ratio > 0.72:
+        confidence = min(0.99, 0.4 + min(zcr, 0.55) * 0.58 + min(sustain_ratio, 1.2) * 0.1)
+        return "open_hihat", "open hi hat", confidence
     if zcr > 0.3 or (mid_ratio > 1.55 and punch_ratio < 1.08):
         confidence = min(0.99, 0.38 + max(zcr, min(mid_ratio / 2.2, 0.45)) * 1.1)
         return "closed_hihat", "closed hi hat", confidence
+    if sustain_ratio > 0.86 and 0.12 <= zcr <= 0.3 and bass_ratio < 1.18 and spectral_balance < 1.45:
+        confidence = min(0.99, 0.44 + min(sustain_ratio, 1.25) * 0.18 + max(0.0, 1.22 - spectral_balance) * 0.16)
+        if spectral_balance < 0.72:
+            return "tom_low", "floor tom", confidence
+        if spectral_balance < 0.98:
+            return "tom_mid", "mid tom", confidence
+        return "tom_high", "high tom", confidence
     confidence = min(0.99, 0.46 + avg_abs * 0.95 + min(mid_ratio, 1.0) * 0.06)
     return "snare", "snare", confidence
 
