@@ -415,6 +415,49 @@ final class ChartGenerationTests: XCTestCase {
         XCTAssertEqual(generated.baseChart.chart.notes.map(\.lane), [.kick, .crash, .hihatClosed])
     }
 
+    func testGenerateLetsClearlyStrongerBackboneCandidateOverrideBeatBias() throws {
+        let analysis = makeAnalysis(raw: [
+            "beats": [0.0, 0.5, 1.0],
+            "drumEvents": [
+                ["eventID": "kick-weak", "label": "kick", "onsetSeconds": 0.5, "velocity": 0.45, "confidence": 0.45],
+                ["eventID": "snare-strong", "label": "snare", "onsetSeconds": 0.5, "velocity": 0.92, "confidence": 0.92],
+                ["eventID": "hat", "label": "closed hat", "onsetSeconds": 0.5, "velocity": 0.50]
+            ]
+        ])
+
+        let generated = ChartGenerator.generate(
+            from: analysis,
+            generatedAt: Date(timeIntervalSince1970: 0),
+            normalizedAnalysisArtifactURI: "file:///tmp/normalized.json"
+        )
+
+        XCTAssertEqual(generated.normalized.drumEvents.map(\.eventID), ["snare-strong"])
+        XCTAssertEqual(generated.baseChart.chart.notes.map(\.lane), [.snare])
+    }
+
+    func testGeneratePreservesOpenHatAccentAlongsideClosedPulseWhenKickAnchored() throws {
+        let analysis = makeAnalysis(raw: [
+            "beats": [0.0, 0.5, 1.0],
+            "drumEvents": [
+                ["eventID": "kick", "label": "kick", "onsetSeconds": 0.0, "velocity": 0.95],
+                ["eventID": "hat-closed", "label": "closed hat", "onsetSeconds": 0.0, "velocity": 0.55],
+                ["eventID": "hat-open", "label": "open hat", "onsetSeconds": 0.125, "velocity": 0.80, "confidence": 0.80],
+                ["eventID": "hat-texture", "label": "closed hat", "onsetSeconds": 0.25, "velocity": 0.40]
+            ]
+        ])
+
+        let generated = ChartGenerator.generate(
+            from: analysis,
+            generatedAt: Date(timeIntervalSince1970: 0),
+            normalizedAnalysisArtifactURI: "file:///tmp/normalized.json"
+        )
+
+        XCTAssertEqual(generated.normalized.drumEvents.map(\.lane), [.kick, .hihatClosed, .hihatOpen])
+        XCTAssertEqual(generated.normalized.drumEvents.map(\.eventID), ["kick", "hat-closed", "hat-open"])
+        XCTAssertEqual(generated.baseChart.chart.notes.map(\.lane), [.kick, .hihatClosed, .hihatOpen])
+        XCTAssertEqual(generated.baseChart.chart.notes.map(\.subdivisionIndex), [0, 0, 1])
+    }
+
     func testGenerateUsesSparserHeuristicGrooveWhenAnalyzerTimingHasNoDrumEvents() throws {
         let analysis = makeAnalysis(raw: [
             "beats": [0.0, 0.5, 1.0, 1.5, 2.0]

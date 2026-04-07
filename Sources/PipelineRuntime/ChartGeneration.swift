@@ -12,6 +12,7 @@ enum ChartGenerator {
     private static let maxClosedHihatPulsePerBeat = 1
     private static let maxHiHatTexturePerBeat = 1
     private static let sparseHatPulseBeatsInBar: Set<Int> = [0]
+    private static let backboneConfidenceOverrideThreshold = 0.2
 
     static func generate(from analysis: AudioAnalysisContract, generatedAt: Date, normalizedAnalysisArtifactURI: String) -> ChartGenerationOutput {
         let timeSignature = TimeSignature(numerator: 4, denominator: 4)
@@ -519,7 +520,7 @@ enum ChartGenerator {
                 .filter { !backboneFamilyLanes.contains($0.lane) && !accentLanes.contains($0.lane) && !hihatFamilyLanes.contains($0.lane) }
                 .sorted(by: eventPreferenceSort)
 
-            let selectedBackbone = backboneEvents.first
+            let selectedBackbone = preferredBackbone(from: backboneEvents, beatIndex: beatIndex)
             let selectedAccent = preferredAccent(from: accentEvents, beatIndex: beatIndex, backbone: selectedBackbone)
             let keptHihats = selectHiHats(from: hihats, beatIndex: beatIndex, backbone: selectedBackbone, accent: selectedAccent)
 
@@ -549,6 +550,27 @@ enum ChartGenerator {
         }
     }
 
+    private static func preferredBackbone(from backboneEvents: [DetectedDrumEvent], beatIndex: Int) -> DetectedDrumEvent? {
+        guard let prioritized = backboneEvents.first else { return nil }
+        guard backboneEvents.count > 1 else { return prioritized }
+
+        let strongest = backboneEvents.max { lhs, rhs in
+            eventStrength(lhs) < eventStrength(rhs)
+        } ?? prioritized
+
+        let prioritizedStrength = eventStrength(prioritized)
+        let strongestStrength = eventStrength(strongest)
+        if strongest.eventID != prioritized.eventID,
+           strongestStrength - prioritizedStrength >= backboneConfidenceOverrideThreshold {
+            return strongest
+        }
+
+        let samePriorityAlternatives = backboneEvents.filter {
+            backbonePriority($0, beatIndex: beatIndex) == backbonePriority(prioritized, beatIndex: beatIndex)
+        }
+        return samePriorityAlternatives.sorted(by: eventPreferenceSort).first ?? prioritized
+    }
+
     private static func preferredAccent(from accents: [DetectedDrumEvent], beatIndex: Int, backbone: DetectedDrumEvent?) -> DetectedDrumEvent? {
         guard !accents.isEmpty else { return nil }
         if backbone?.lane == .snare {
@@ -566,24 +588,29 @@ enum ChartGenerator {
         backbone: DetectedDrumEvent?,
         accent: DetectedDrumEvent?
     ) -> [DetectedDrumEvent] {
-        var seenHiHatSubdivisions = Set<Int>()
-        let uniqueHihats = hats.filter { event in
-            guard let subdivision = event.onsetSubdivisionIndex else { return false }
-            return seenHiHatSubdivisions.insert(subdivision).inserted
-        }
-
+        let uniqueHihats = deduplicateHiHatsBySubdivision(hats)
         guard !uniqueHihats.isEmpty else { return [] }
 
         let hasKickLikeAnchor = backbone?.lane == .kick || accent?.lane == .crash
         let shouldKeepPulse = hasKickLikeAnchor || prefersSparseHatPulseWithoutAnchor(beatIndex)
-        var kept: [DetectedDrumEvent] = shouldKeepPulse ? Array(uniqueHihats.prefix(maxClosedHihatPulsePerBeat)) : []
+
+        let openAccent = preferredOpenHiHatAccent(from: uniqueHihats, hasKickLikeAnchor: hasKickLikeAnchor)
+        let pulseCandidates = uniqueHihats.filter { event in
+            event.lane == .hihatClosed && event.eventID != openAccent?.eventID
+        }
+
+        var kept: [DetectedDrumEvent] = shouldKeepPulse ? Array(pulseCandidates.prefix(maxClosedHihatPulsePerBeat)) : []
+        if let openAccent, !kept.contains(where: { $0.eventID == openAccent.eventID }) {
+            kept.append(openAccent)
+        }
 
         guard hasKickLikeAnchor, prefersTextureOnBeat(beatIndex) else {
-            return kept
+            return kept.sorted(by: eventPreferenceSort)
         }
 
         let textureCandidates = uniqueHihats.filter { event in
             guard let subdivisionIndex = event.onsetSubdivisionIndex else { return false }
+            guard event.lane == .hihatClosed else { return false }
             guard !kept.contains(where: { $0.eventID == event.eventID }) else { return false }
             switch subdivisionIndex % max(fallbackSubdivisionsPerBeat, 1) {
             case 1, 3: return true
@@ -592,7 +619,7 @@ enum ChartGenerator {
         }
 
         kept.append(contentsOf: textureCandidates.sorted(by: eventPreferenceSort).prefix(maxHiHatTexturePerBeat))
-        return Array(kept.prefix(maxClosedHihatPulsePerBeat + maxHiHatTexturePerBeat))
+        return Array(kept.sorted(by: eventPreferenceSort).prefix(maxClosedHihatPulsePerBeat + maxHiHatTexturePerBeat + (openAccent == nil ? 0 : 1)))
     }
 
     private static func prefersTextureOnBeat(_ beatIndex: Int) -> Bool {
@@ -602,6 +629,43 @@ enum ChartGenerator {
 
     private static func prefersSparseHatPulseWithoutAnchor(_ beatIndex: Int) -> Bool {
         sparseHatPulseBeatsInBar.contains(((beatIndex % 4) + 4) % 4)
+    }
+
+    private static func deduplicateHiHatsBySubdivision(_ hats: [DetectedDrumEvent]) -> [DetectedDrumEvent] {
+        var bestBySubdivision: [Int: DetectedDrumEvent] = [:]
+        for hat in hats {
+            guard let subdivision = hat.onsetSubdivisionIndex else { continue }
+            guard let existing = bestBySubdivision[subdivision] else {
+                bestBySubdivision[subdivision] = hat
+                continue
+            }
+            if prefersHiHatCandidate(hat, over: existing) {
+                bestBySubdivision[subdivision] = hat
+            }
+        }
+
+        return bestBySubdivision.values.sorted(by: eventPreferenceSort)
+    }
+
+    private static func prefersHiHatCandidate(_ candidate: DetectedDrumEvent, over existing: DetectedDrumEvent) -> Bool {
+        if candidate.lane != existing.lane {
+            return candidate.lane == .hihatOpen
+        }
+        return eventPreferenceSort(candidate, existing)
+    }
+
+    private static func preferredOpenHiHatAccent(from hats: [DetectedDrumEvent], hasKickLikeAnchor: Bool) -> DetectedDrumEvent? {
+        let openHats = hats.filter { $0.lane == .hihatOpen }
+        guard !openHats.isEmpty else { return nil }
+        if hasKickLikeAnchor {
+            return openHats.sorted(by: eventPreferenceSort).first
+        }
+        return openHats.first { ($0.onsetSubdivisionIndex ?? 0) % max(fallbackSubdivisionsPerBeat, 1) == 0 }
+            ?? openHats.sorted(by: eventPreferenceSort).first
+    }
+
+    private static func eventStrength(_ event: DetectedDrumEvent) -> Double {
+        event.confidence ?? event.velocity ?? 0
     }
 
     private static func eventPreferenceSort(_ lhs: DetectedDrumEvent, _ rhs: DetectedDrumEvent) -> Bool {

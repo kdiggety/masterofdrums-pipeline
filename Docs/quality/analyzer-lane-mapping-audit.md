@@ -108,7 +108,7 @@ Open hats map cleanly, but both open and closed hats are grouped into `hihatFami
 
 ### Effect
 
-An open hat can compete directly with closed hats for the same per-beat caps. Depending on candidate order/confidence, open-hat accents may disappear in favor of a closed pulse or vice versa.
+Historically an open hat could compete directly with closed hats for the same per-beat caps, so phrase accents could disappear in favor of a generic closed pulse. The current retune now preserves a surviving open-hat accent separately from the closed-hat pulse cap, which should make authoring review closer to the analyzer intent without reopening full hi-hat spam.
 
 ### Audit risk
 
