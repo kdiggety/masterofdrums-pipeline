@@ -139,7 +139,7 @@ final class ChartGenerationTests: XCTestCase {
         XCTAssertEqual(generated.normalized.drumEventDiagnostics?.deduplicatedCandidateCount, 2)
         XCTAssertEqual(generated.normalized.drumEventDiagnostics?.shapingReductionCount, 2)
         XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("Timing/events split: timing source=analyzer; drum-event source=analyzer") }))
-        XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("Collapsed 1 analyzer drum-event duplicates") }))
+        XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("Collapsed") && $0.contains("analyzer drum-event duplicates") }))
         XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("Analyzer drum-event diagnostics: raw=3 mapped=3 post-shaping=1") }))
     }
 

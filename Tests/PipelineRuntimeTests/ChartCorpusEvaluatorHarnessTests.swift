@@ -118,7 +118,7 @@ final class ChartCorpusEvaluatorHarnessTests: XCTestCase {
         XCTAssertFalse(packaged.text.contains("other-song"))
         XCTAssertTrue(packaged.text.contains("compare status=regressed baseline=prototype candidate=prototype pass=true->true score=+0.00 notes=+1 measures=+0 avg_notes_per_measure=+1.00"))
         XCTAssertTrue(packaged.text.contains("highlights=note_drift=+1 (50.00%); density_shift=+1.00"))
-        XCTAssertTrue(packaged.text.contains("comparison_summary watch=0 severe=1"))
+        XCTAssertTrue(packaged.text.contains("comparison_summary regressed=1 severe=1"))
         XCTAssertTrue(packaged.text.contains("preview_added=tick=960:beat=2:sub=nil:lane=hihat_closed:vel=nil"))
         XCTAssertTrue(packaged.text.contains("focused_lane_balance kick=1@0.33 snare=1@0.33 hihat_closed=1@0.33"))
     }
