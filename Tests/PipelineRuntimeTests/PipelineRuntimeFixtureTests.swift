@@ -107,7 +107,7 @@ final class PipelineRuntimeFixtureTests: XCTestCase {
         let persistedBaseChart = try decode(BaseChartContract.self, from: String(decoding: Data(contentsOf: baseChartArtifactURL), as: UTF8.self))
         XCTAssertEqual(persistedBaseChart.source.normalizedAnalysisArtifactURI, normalizedArtifact.uri)
         XCTAssertEqual(persistedBaseChart.timingContractVersion, "0.1.0")
-        XCTAssertEqual(persistedBaseChart.timing.bpm, 120, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(persistedBaseChart.timing.bpm), 120, accuracy: 0.001)
         XCTAssertEqual(persistedBaseChart.timing.ticksPerBeat, 480)
         XCTAssertEqual(persistedBaseChart.timing.timeSignature.numerator, 4)
         XCTAssertEqual(persistedBaseChart.timing.timeSignature.denominator, 4)
@@ -342,7 +342,7 @@ final class PipelineRuntimeFixtureTests: XCTestCase {
         XCTAssertEqual(summary.summary.estimatedTempoBPM, 123.0)
         XCTAssertEqual(summary.warnings, ["validated"])
 
-        let summaryText = String(decoding: Data(contentsOf: summaryTextURL), as: UTF8.self)
+        let summaryText = String(decoding: try Data(contentsOf: summaryTextURL), as: UTF8.self)
         XCTAssertTrue(summaryText.contains("analyzer validation summary: PASS"))
         XCTAssertTrue(summaryText.contains("tempo=123.00"))
         XCTAssertTrue(summaryText.contains("warnings: validated"))

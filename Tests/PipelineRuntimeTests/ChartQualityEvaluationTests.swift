@@ -321,7 +321,7 @@ final class ChartQualityEvaluationTests: XCTestCase {
         XCTAssertTrue(report.regressionSummary.contains("focused_lane_balance kick=4@0.67 snare=1@0.17 hihat_closed=1@0.17"))
     }
 
-    func testComparatorHighlightsFocusedLaneDistributionDrift() {
+    func testComparatorHighlightsFocusedLaneDistributionDrift() throws {
         let expectation = ChartQualityExpectation(
             difficulty: "prototype",
             noteCountRange: .init(min: 1, max: 16),

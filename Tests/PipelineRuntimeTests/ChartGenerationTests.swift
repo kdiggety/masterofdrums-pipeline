@@ -21,7 +21,7 @@ final class ChartGenerationTests: XCTestCase {
         XCTAssertEqual(generated.normalized.summary.beatCount, 3)
         XCTAssertEqual(generated.normalized.beatGrid.count, 12)
         XCTAssertEqual(generated.baseChart.timingContractVersion, "0.1.0")
-        XCTAssertEqual(generated.baseChart.timing.bpm, 120, accuracy: 0.0001)
+        XCTAssertEqual(try XCTUnwrap(generated.baseChart.timing.bpm), 120, accuracy: 0.0001)
         XCTAssertEqual(generated.baseChart.timing.offsetSeconds, 0, accuracy: 0.0001)
         XCTAssertEqual(generated.baseChart.timing.ticksPerBeat, 480)
         XCTAssertEqual(generated.baseChart.timing.timeSignature.numerator, 4)
