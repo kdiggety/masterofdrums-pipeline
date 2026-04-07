@@ -486,19 +486,31 @@ enum ChartGenerator {
     private static let backboneFamilyLanes: Set<DrumLane> = [.kick, .snare]
     private static let accentLanes: Set<DrumLane> = [.crash, .ride]
     private static let hihatFamilyLanes: Set<DrumLane> = [.hihatClosed, .hihatOpen]
+    private static let tomLanes: Set<DrumLane> = [.tomHigh, .tomMid, .tomLow]
+
+    private struct BeatShapingContext {
+        let beatIndex: Int
+        let isTomHeavy: Bool
+        let isFillLike: Bool
+        let continuesTomMotion: Bool
+        let endsFillPhrase: Bool
+    }
 
     private static func shapeDetectedDrumEvents(_ events: [DetectedDrumEvent]) -> [DetectedDrumEvent] {
         guard !events.isEmpty else { return [] }
 
         let groupedByBeat = Dictionary(grouping: events) { $0.onsetBeatIndex ?? -1 }
-        return groupedByBeat.keys.sorted().flatMap { beatIndex -> [DetectedDrumEvent] in
-            guard let beatEvents = groupedByBeat[beatIndex] else { return [] }
+        let sortedBeatIndices = groupedByBeat.keys.sorted()
+        let beatContexts = makeBeatShapingContexts(groupedByBeat: groupedByBeat, sortedBeatIndices: sortedBeatIndices)
+
+        return sortedBeatIndices.flatMap { beatIndex -> [DetectedDrumEvent] in
+            guard let beatEvents = groupedByBeat[beatIndex], let context = beatContexts[beatIndex] else { return [] }
 
             let backboneEvents = beatEvents
                 .filter { backboneFamilyLanes.contains($0.lane) }
                 .sorted { lhs, rhs in
-                    let lhsPriority = backbonePriority(lhs, beatIndex: beatIndex)
-                    let rhsPriority = backbonePriority(rhs, beatIndex: beatIndex)
+                    let lhsPriority = backbonePriority(lhs, context: context)
+                    let rhsPriority = backbonePriority(rhs, context: context)
                     if lhsPriority != rhsPriority { return lhsPriority < rhsPriority }
                     return eventPreferenceSort(lhs, rhs)
                 }
@@ -520,12 +532,43 @@ enum ChartGenerator {
                 .filter { !backboneFamilyLanes.contains($0.lane) && !accentLanes.contains($0.lane) && !hihatFamilyLanes.contains($0.lane) }
                 .sorted(by: eventPreferenceSort)
 
-            let selectedBackbone = preferredBackbone(from: backboneEvents, beatIndex: beatIndex)
-            let selectedAccent = preferredAccent(from: accentEvents, beatIndex: beatIndex, backbone: selectedBackbone)
-            let keptHihats = selectHiHats(from: hihats, beatIndex: beatIndex, backbone: selectedBackbone, accent: selectedAccent)
+            let selectedBackbone = preferredBackbone(from: backboneEvents, context: context)
+            let selectedAccent = preferredAccent(from: accentEvents, context: context, backbone: selectedBackbone)
+            let keptHihats = selectHiHats(from: hihats, context: context, backbone: selectedBackbone, accent: selectedAccent)
 
             return ([selectedBackbone, selectedAccent].compactMap { $0 } + keptHihats + supportingLanes).sorted(by: eventPreferenceSort)
         }
+    }
+
+    private static func makeBeatShapingContexts(groupedByBeat: [Int: [DetectedDrumEvent]], sortedBeatIndices: [Int]) -> [Int: BeatShapingContext] {
+        func tomCount(for beatIndex: Int) -> Int {
+            groupedByBeat[beatIndex]?.filter { tomLanes.contains($0.lane) }.count ?? 0
+        }
+
+        func nonHatCount(for beatIndex: Int) -> Int {
+            groupedByBeat[beatIndex]?.filter { !hihatFamilyLanes.contains($0.lane) }.count ?? 0
+        }
+
+        var contexts: [Int: BeatShapingContext] = [:]
+        for (position, beatIndex) in sortedBeatIndices.enumerated() {
+            let previousBeatIndex = position > 0 ? sortedBeatIndices[position - 1] : nil
+            let nextBeatIndex = position + 1 < sortedBeatIndices.count ? sortedBeatIndices[position + 1] : nil
+            let currentTomCount = tomCount(for: beatIndex)
+            let previousTomCount = previousBeatIndex.map(tomCount(for:)) ?? 0
+            let nextTomCount = nextBeatIndex.map(tomCount(for:)) ?? 0
+            let isTomHeavy = currentTomCount > 0
+            let isFillLike = currentTomCount > 0 && (nonHatCount(for: beatIndex) >= 2 || previousTomCount > 0 || nextTomCount > 0)
+            let continuesTomMotion = (previousTomCount > 0) || (nextTomCount > 0)
+            let endsFillPhrase = currentTomCount > 0 && nextTomCount == 0
+            contexts[beatIndex] = BeatShapingContext(
+                beatIndex: beatIndex,
+                isTomHeavy: isTomHeavy,
+                isFillLike: isFillLike,
+                continuesTomMotion: continuesTomMotion,
+                endsFillPhrase: endsFillPhrase
+            )
+        }
+        return contexts
     }
 
     private static func hihatSubdivisionPriority(_ subdivisionIndex: Int?, beatIndex: Int) -> Int {
@@ -538,8 +581,16 @@ enum ChartGenerator {
         }
     }
 
-    private static func backbonePriority(_ event: DetectedDrumEvent, beatIndex: Int) -> Int {
-        let beatInBar = (((beatIndex % 4) + 4) % 4) + 1
+    private static func backbonePriority(_ event: DetectedDrumEvent, context: BeatShapingContext) -> Int {
+        if context.isFillLike {
+            switch event.lane {
+            case .kick: return 0
+            case .snare: return 1
+            default: return 3
+            }
+        }
+
+        let beatInBar = (((context.beatIndex % 4) + 4) % 4) + 1
         switch event.lane {
         case .snare:
             return (beatInBar == 2 || beatInBar == 4) ? 0 : 2
@@ -550,7 +601,7 @@ enum ChartGenerator {
         }
     }
 
-    private static func preferredBackbone(from backboneEvents: [DetectedDrumEvent], beatIndex: Int) -> DetectedDrumEvent? {
+    private static func preferredBackbone(from backboneEvents: [DetectedDrumEvent], context: BeatShapingContext) -> DetectedDrumEvent? {
         guard let prioritized = backboneEvents.first else { return nil }
         guard backboneEvents.count > 1 else { return prioritized }
 
@@ -566,17 +617,20 @@ enum ChartGenerator {
         }
 
         let samePriorityAlternatives = backboneEvents.filter {
-            backbonePriority($0, beatIndex: beatIndex) == backbonePriority(prioritized, beatIndex: beatIndex)
+            backbonePriority($0, context: context) == backbonePriority(prioritized, context: context)
         }
         return samePriorityAlternatives.sorted(by: eventPreferenceSort).first ?? prioritized
     }
 
-    private static func preferredAccent(from accents: [DetectedDrumEvent], beatIndex: Int, backbone: DetectedDrumEvent?) -> DetectedDrumEvent? {
+    private static func preferredAccent(from accents: [DetectedDrumEvent], context: BeatShapingContext, backbone: DetectedDrumEvent?) -> DetectedDrumEvent? {
         guard !accents.isEmpty else { return nil }
+        if context.isFillLike && (context.endsFillPhrase || context.continuesTomMotion || backbone?.lane == .kick) {
+            return accents.first
+        }
         if backbone?.lane == .snare {
             return nil
         }
-        if beatIndex >= 0 && (beatIndex % 4) == 0 {
+        if context.beatIndex >= 0 && (context.beatIndex % 4) == 0 {
             return accents.first
         }
         return backbone == nil ? accents.first : nil
@@ -584,7 +638,7 @@ enum ChartGenerator {
 
     private static func selectHiHats(
         from hats: [DetectedDrumEvent],
-        beatIndex: Int,
+        context: BeatShapingContext,
         backbone: DetectedDrumEvent?,
         accent: DetectedDrumEvent?
     ) -> [DetectedDrumEvent] {
@@ -592,7 +646,7 @@ enum ChartGenerator {
         guard !uniqueHihats.isEmpty else { return [] }
 
         let hasKickLikeAnchor = backbone?.lane == .kick || accent?.lane == .crash
-        let shouldKeepPulse = hasKickLikeAnchor || prefersSparseHatPulseWithoutAnchor(beatIndex)
+        let shouldKeepPulse = !context.isTomHeavy && (hasKickLikeAnchor || prefersSparseHatPulseWithoutAnchor(context.beatIndex))
 
         let openAccent = preferredOpenHiHatAccent(from: uniqueHihats, hasKickLikeAnchor: hasKickLikeAnchor)
         let pulseCandidates = uniqueHihats.filter { event in
@@ -600,11 +654,13 @@ enum ChartGenerator {
         }
 
         var kept: [DetectedDrumEvent] = shouldKeepPulse ? Array(pulseCandidates.prefix(maxClosedHihatPulsePerBeat)) : []
-        if let openAccent, !kept.contains(where: { $0.eventID == openAccent.eventID }) {
+        if let openAccent,
+           !context.isTomHeavy,
+           !kept.contains(where: { $0.eventID == openAccent.eventID }) {
             kept.append(openAccent)
         }
 
-        guard hasKickLikeAnchor, prefersTextureOnBeat(beatIndex) else {
+        guard hasKickLikeAnchor, !context.isTomHeavy, prefersTextureOnBeat(context.beatIndex) else {
             return kept.sorted(by: eventPreferenceSort)
         }
 
@@ -1239,9 +1295,9 @@ enum ChartGenerator {
         case "snare", "sd", "sn", "rimshot", "rim", "cross_stick", "side_stick", "sidestick": return .snare
         case "hihat_closed", "closed_hihat", "closed_hat", "closed_hi_hat", "hhc", "hat_closed", "hi_hat_closed", "chh", "hh", "hihat": return .hihatClosed
         case "hihat_open", "open_hihat", "open_hat", "open_hi_hat", "hho", "hat_open", "hi_hat_open", "ohh": return .hihatOpen
-        case "tom_low", "low_tom", "floor_tom", "floortom", "tom_3": return .tomLow
-        case "tom_mid", "mid_tom", "middle_tom", "mid_tom_1", "tom_medium", "tom_2": return .tomMid
-        case "tom_high", "high_tom", "rack_tom", "racktom", "tom_1": return .tomHigh
+        case "tom_low", "low_tom", "floor_tom", "floortom", "floor_tom_low", "low_floor_tom", "high_floor_tom", "tom_3", "floor_tom_1": return .tomLow
+        case "tom_mid", "mid_tom", "middle_tom", "mid_tom_1", "mid_tom_2", "tom_medium", "tom_2", "center_tom", "middle_rack_tom": return .tomMid
+        case "tom_high", "high_tom", "rack_tom", "racktom", "rack_tom_1", "rack_tom_2", "high_rack_tom", "tom_1": return .tomHigh
         case "crash", "crash_cymbal", "crash_left", "crash_right", "crash_1", "crash_2", "china": return .crash
         case "ride", "ride_cymbal", "ride_bell", "ride_1", "ride_2": return .ride
         case "clap", "handclap", "hand_clap": return .clap

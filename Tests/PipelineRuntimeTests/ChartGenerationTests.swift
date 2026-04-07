@@ -458,6 +458,54 @@ final class ChartGenerationTests: XCTestCase {
         XCTAssertEqual(generated.baseChart.chart.notes.map(\.subdivisionIndex), [0, 0, 1])
     }
 
+    func testGeneratePreservesTomFillMotionAndCrashTransitionWithoutHatClutter() throws {
+        let analysis = makeAnalysis(raw: [
+            "beats": [0.0, 0.5, 1.0, 1.5, 2.0],
+            "drumEvents": [
+                ["eventID": "kick-1", "label": "kick", "onsetSeconds": 0.0, "velocity": 0.95],
+                ["eventID": "hat-1", "label": "closed hat", "onsetSeconds": 0.0, "velocity": 0.55],
+                ["eventID": "tom-high", "label": "rack tom 1", "onsetSeconds": 1.0, "velocity": 0.78],
+                ["eventID": "kick-under-fill", "label": "kick", "onsetSeconds": 1.0, "velocity": 0.82],
+                ["eventID": "hat-fill", "label": "closed hat", "onsetSeconds": 1.125, "velocity": 0.50],
+                ["eventID": "tom-mid", "label": "middle rack tom", "onsetSeconds": 1.5, "velocity": 0.80],
+                ["eventID": "crash-resolve", "label": "crash", "onsetSeconds": 1.5, "velocity": 0.92],
+                ["eventID": "snare-under-fill", "label": "snare", "onsetSeconds": 1.5, "velocity": 0.60],
+                ["eventID": "hat-resolve", "label": "closed hat", "onsetSeconds": 1.625, "velocity": 0.48]
+            ]
+        ], duration: 2.0)
+
+        let generated = ChartGenerator.generate(
+            from: analysis,
+            generatedAt: Date(timeIntervalSince1970: 0),
+            normalizedAnalysisArtifactURI: "file:///tmp/normalized.json"
+        )
+
+        XCTAssertEqual(generated.normalized.drumEvents.map(\.eventID), ["kick-1", "hat-1", "kick-under-fill", "tom-high", "crash-resolve", "tom-mid"])
+        XCTAssertEqual(generated.normalized.drumEvents.map(\.lane), [.kick, .hihatClosed, .kick, .tomHigh, .crash, .tomMid])
+        XCTAssertFalse(generated.normalized.drumEvents.contains(where: { $0.eventID == "hat-fill" || $0.eventID == "hat-resolve" }))
+        XCTAssertEqual(generated.baseChart.chart.notes.map(\.lane), [.kick, .hihatClosed, .kick, .tomHigh, .crash, .tomMid])
+    }
+
+    func testGenerateMapsExpandedTomAliasesToGameplayLanes() throws {
+        let analysis = makeAnalysis(raw: [
+            "beats": [0.0, 0.5, 1.0, 1.5],
+            "drumEvents": [
+                ["eventID": "low", "label": "low floor tom", "onsetSeconds": 0.0, "velocity": 0.7],
+                ["eventID": "mid", "label": "middle rack tom", "onsetSeconds": 0.5, "velocity": 0.7],
+                ["eventID": "high", "label": "rack tom 2", "onsetSeconds": 1.0, "velocity": 0.7]
+            ]
+        ], duration: 1.5)
+
+        let generated = ChartGenerator.generate(
+            from: analysis,
+            generatedAt: Date(timeIntervalSince1970: 0),
+            normalizedAnalysisArtifactURI: "file:///tmp/normalized.json"
+        )
+
+        XCTAssertEqual(generated.normalized.drumEvents.map(\.lane), [.tomLow, .tomMid, .tomHigh])
+        XCTAssertEqual(generated.baseChart.chart.notes.map(\.lane), [.tomLow, .tomMid, .tomHigh])
+    }
+
     func testGenerateUsesSparserHeuristicGrooveWhenAnalyzerTimingHasNoDrumEvents() throws {
         let analysis = makeAnalysis(raw: [
             "beats": [0.0, 0.5, 1.0, 1.5, 2.0]
