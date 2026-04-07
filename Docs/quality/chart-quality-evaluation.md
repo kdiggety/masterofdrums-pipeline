@@ -176,7 +176,7 @@ The current report avoids that by projecting the chart into a stable snapshot wi
 
 That is deliberately opinionated: it keeps the parts of the generated chart that matter for structural regressions, while ignoring volatile IDs and timestamps.
 
-There is also now a tiny comparison helper for before/after tuning work: `ChartMetricsComparator.compare(baseline:candidate:)`. It does not attempt a full diff. It answers the practical questions that come up when analyzer mapping changes:
+There is also now a tiny comparison helper for before/after tuning work: `ChartMetricsComparator.compare(baseline:candidate:)`. It does not attempt a full diff. It now also assigns an operator-facing regression status (`stable`, `improved`, `watch`, `regressed`) plus short highlight reasons so corpus runs do not require humans to mentally score every delta line. It answers the practical questions that come up when analyzer mapping changes:
 
 - did total note count go up or down?
 - did notes-per-measure get denser or sparser?
@@ -184,6 +184,18 @@ There is also now a tiny comparison helper for before/after tuning work: `ChartM
 - did their shares of the chart drift even if the absolute counts changed?
 
 That gives chart-generation iteration a cheap way to say “this version got 2 notes denser and shifted 8% more of the chart onto kick” without snapshotting entire artifacts.
+
+Current built-in tuning thresholds are intentionally simple and validation-friendly:
+
+- baseline pass → candidate fail = `regressed`
+- baseline fail → candidate pass = `improved`
+- score drop ≥ `0.15` = `regressed`, ≥ `0.05` = `watch`
+- note-count drift ≥ `35%` of baseline = `regressed`, ≥ `18%` = `watch`
+- average notes/measure drift ≥ `1.5` = `regressed`, ≥ `0.75` = `watch`
+- focused kick/snare/closed-hat share drift ≥ `0.18` = `regressed`, ≥ `0.08` = `watch`
+- note-preview churn (added + removed preview notes) ≥ `8` = `regressed`, ≥ `4` = `watch`
+
+Those thresholds are not pretending to be musically final. They are there to surface suspicious backend/mapping/shaping changes early and consistently in corpus output.
 
 For real clips, this is a better regression-review shape because:
 
