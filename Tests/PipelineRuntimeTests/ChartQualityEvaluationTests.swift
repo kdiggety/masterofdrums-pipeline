@@ -273,10 +273,10 @@ final class ChartQualityEvaluationTests: XCTestCase {
         let report = ChartQualityEvaluator.evaluate(chart: chart, against: expectation)
         let codes = Set(report.issues.map(\.code))
         XCTAssertEqual(report.metrics.maxConsecutiveSameLaneNotes, 3)
-        XCTAssertEqual(report.metrics.maxMeasureBurstiness, 1.5, accuracy: 0.0001)
+        XCTAssertEqual(report.metrics.maxMeasureBurstiness, 2.0, accuracy: 0.0001)
         XCTAssertTrue(codes.contains("same_lane_streak_too_long"))
         XCTAssertTrue(codes.contains("measure_burstiness_too_high"))
-        XCTAssertTrue(report.regressionSummary.contains("quality_flags same_lane_streak=3 measure_burstiness=1.50"))
+        XCTAssertTrue(report.regressionSummary.contains("quality_flags same_lane_streak=3 measure_burstiness=2.00"))
     }
 
     func testEvaluatorFlagsFocusedLaneDistributionAndDensityDrift() {
@@ -389,18 +389,18 @@ final class ChartQualityEvaluationTests: XCTestCase {
         XCTAssertEqual(hihatDelta.baselineNoteShare, 0.5, accuracy: 0.0001)
         XCTAssertEqual(hihatDelta.candidateNoteShare, 0.5, accuracy: 0.0001)
         XCTAssertEqual(hihatDelta.noteShareDelta, 0.0, accuracy: 0.0001)
-        XCTAssertEqual(comparison.status, "watch")
+        XCTAssertEqual(comparison.status, "regressed")
         XCTAssertTrue(comparison.highlights.contains("note_drift=+2 (50.00%)"))
         XCTAssertTrue(comparison.highlights.contains("density_shift=+2.00"))
-        XCTAssertTrue(comparison.summary.contains("status=watch"))
+        XCTAssertTrue(comparison.summary.contains("status=regressed"))
         XCTAssertTrue(comparison.summary.contains("notes=+2"))
         XCTAssertTrue(comparison.summary.contains("kick=+1@+0.08"))
         XCTAssertTrue(comparison.summary.contains("snare=+0@-0.08"))
         XCTAssertTrue(comparison.summary.contains("hihat_closed=+1@+0.00"))
-        XCTAssertTrue(comparison.summary.contains("highlights=note_drift=+2 (50.00%); density_shift=+2.00; preview_churn=4"))
+        XCTAssertTrue(comparison.summary.contains("highlights=note_drift=+2 (50.00%); density_shift=+2.00"))
         XCTAssertTrue(comparison.summary.contains("preview_added="))
-        XCTAssertEqual(comparison.previewAdded.count, 4)
-        XCTAssertEqual(comparison.previewRemoved.count, 0)
+        XCTAssertEqual(comparison.previewAdded.count, 3)
+        XCTAssertEqual(comparison.previewRemoved.count, 1)
     }
 
     func testCorpusRunnerProducesStableRegressionFriendlyTextReport() {

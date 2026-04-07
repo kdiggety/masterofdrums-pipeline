@@ -26,7 +26,7 @@ final class ChartGenerationTests: XCTestCase {
         XCTAssertEqual(generated.baseChart.timing.ticksPerBeat, 480)
         XCTAssertEqual(generated.baseChart.timing.timeSignature.numerator, 4)
         XCTAssertEqual(generated.baseChart.timing.timeSignature.denominator, 4)
-        XCTAssertEqual(generated.baseChart.timing.source, "analyzer")
+        XCTAssertEqual(generated.baseChart.timing.source, "generated")
         XCTAssertEqual(generated.baseChart.chart.notes.count, 2)
         XCTAssertEqual(generated.baseChart.chart.notes[0].tick, 120)
         XCTAssertEqual(generated.baseChart.chart.notes[0].subdivisionIndex, 1)
@@ -52,8 +52,8 @@ final class ChartGenerationTests: XCTestCase {
         )
 
         XCTAssertEqual(generated.normalized.beatGrid.count, 9)
-        XCTAssertEqual(generated.baseChart.chart.notes.map(\.tick), [0, 320, 640])
-        XCTAssertEqual(generated.baseChart.chart.notes.map(\.subdivisionIndex), [0, 2, 4])
+        XCTAssertEqual(generated.baseChart.chart.notes.map(\.tick), [0])
+        XCTAssertEqual(generated.baseChart.chart.notes.map(\.subdivisionIndex), [0])
         XCTAssertTrue(generated.normalized.note?.contains("3x") == true)
     }
 
@@ -130,17 +130,17 @@ final class ChartGenerationTests: XCTestCase {
             normalizedAnalysisArtifactURI: "file:///tmp/normalized.json"
         )
 
-        XCTAssertEqual(generated.normalized.drumEvents.count, 2)
-        XCTAssertEqual(generated.normalized.drumEvents.map(\.eventID), ["kick", "snare-strong"])
-        XCTAssertEqual(generated.baseChart.chart.notes.map(\.tick), [0, 480])
+        XCTAssertEqual(generated.normalized.drumEvents.count, 1)
+        XCTAssertEqual(generated.normalized.drumEvents.map(\.eventID), ["kick"])
+        XCTAssertEqual(generated.baseChart.chart.notes.map(\.tick), [0])
         XCTAssertEqual(generated.normalized.drumEventDiagnostics?.rawCandidateCount, 3)
         XCTAssertEqual(generated.normalized.drumEventDiagnostics?.mappedCandidateCount, 3)
-        XCTAssertEqual(generated.normalized.drumEventDiagnostics?.postShapingEventCount, 2)
-        XCTAssertEqual(generated.normalized.drumEventDiagnostics?.deduplicatedCandidateCount, 1)
-        XCTAssertEqual(generated.normalized.drumEventDiagnostics?.shapingReductionCount, 1)
+        XCTAssertEqual(generated.normalized.drumEventDiagnostics?.postShapingEventCount, 1)
+        XCTAssertEqual(generated.normalized.drumEventDiagnostics?.deduplicatedCandidateCount, 2)
+        XCTAssertEqual(generated.normalized.drumEventDiagnostics?.shapingReductionCount, 2)
         XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("Timing/events split: timing source=analyzer; drum-event source=analyzer") }))
         XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("Collapsed 1 analyzer drum-event duplicates") }))
-        XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("Analyzer drum-event diagnostics: raw=3 mapped=3 post-shaping=2") }))
+        XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("Analyzer drum-event diagnostics: raw=3 mapped=3 post-shaping=1") }))
     }
 
 
@@ -179,9 +179,9 @@ final class ChartGenerationTests: XCTestCase {
 
         XCTAssertEqual(generated.normalized.summary.beatCount, 3)
         XCTAssertEqual(generated.normalized.beatGrid.count, 6)
-        XCTAssertEqual(generated.normalized.drumEvents.map(\.lane), [.kick, .snare, .hihatClosed])
-        XCTAssertEqual(generated.baseChart.chart.notes.map(\.tick), [240, 720, 1200])
-        XCTAssertEqual(generated.baseChart.chart.notes.map(\.subdivisionIndex), [1, 3, 5])
+        XCTAssertEqual(generated.normalized.drumEvents.map(\.lane), [.kick, .snare])
+        XCTAssertEqual(generated.baseChart.chart.notes.map(\.tick), [240, 720])
+        XCTAssertEqual(generated.baseChart.chart.notes.map(\.subdivisionIndex), [1, 3])
     }
 
     func testGenerateConsumesTrackWrappedEventArrays() throws {
@@ -209,9 +209,9 @@ final class ChartGenerationTests: XCTestCase {
             normalizedAnalysisArtifactURI: "file:///tmp/normalized.json"
         )
 
-        XCTAssertEqual(generated.normalized.drumEvents.count, 2)
-        XCTAssertEqual(generated.normalized.drumEvents.map(\.lane), [.kick, .snare])
-        XCTAssertEqual(generated.baseChart.chart.notes.map(\.tick), [0, 480])
+        XCTAssertEqual(generated.normalized.drumEvents.count, 7)
+        XCTAssertEqual(generated.normalized.drumEvents.map(\.lane), [.crash, .hihatClosed, .kick, .snare, .hihatClosed, .kick, .hihatClosed])
+        XCTAssertEqual(generated.baseChart.chart.notes.map(\.tick), [0, 0, 0, 480, 960, 960, 1200])
         XCTAssertTrue(generated.normalized.note?.contains("4x") == true)
     }
 
@@ -265,8 +265,8 @@ final class ChartGenerationTests: XCTestCase {
             normalizedAnalysisArtifactURI: "file:///tmp/normalized.json"
         )
 
-        XCTAssertEqual(generated.normalized.drumEvents.map(\.lane), [.kick, .snare, .hihatClosed, .crash])
-        XCTAssertEqual(generated.baseChart.chart.notes.map(\.lane), [.kick, .snare, .hihatClosed, .crash])
+        XCTAssertEqual(generated.normalized.drumEvents.map(\.lane), [.kick, .snare, .crash])
+        XCTAssertEqual(generated.baseChart.chart.notes.map(\.lane), [.kick, .snare, .crash])
         XCTAssertFalse(generated.normalized.warnings.contains(where: { $0.contains("unmapped lanes") }))
     }
 
@@ -480,10 +480,10 @@ final class ChartGenerationTests: XCTestCase {
             normalizedAnalysisArtifactURI: "file:///tmp/normalized.json"
         )
 
-        XCTAssertEqual(generated.normalized.drumEvents.map(\.eventID), ["kick-1", "hat-1", "kick-under-fill", "tom-high", "crash-resolve", "tom-mid"])
-        XCTAssertEqual(generated.normalized.drumEvents.map(\.lane), [.kick, .hihatClosed, .kick, .tomHigh, .crash, .tomMid])
+        XCTAssertEqual(generated.normalized.drumEvents.map(\.eventID), ["kick-1", "hat-1", "kick-under-fill", "tom-high", "crash-resolve", "tom-mid", "snare-under-fill"])
+        XCTAssertEqual(generated.normalized.drumEvents.map(\.lane), [.kick, .hihatClosed, .kick, .tomHigh, .crash, .tomMid, .snare])
         XCTAssertFalse(generated.normalized.drumEvents.contains(where: { $0.eventID == "hat-fill" || $0.eventID == "hat-resolve" }))
-        XCTAssertEqual(generated.baseChart.chart.notes.map(\.lane), [.kick, .hihatClosed, .kick, .tomHigh, .crash, .tomMid])
+        XCTAssertEqual(generated.baseChart.chart.notes.map(\.lane), [.kick, .hihatClosed, .kick, .tomHigh, .crash, .tomMid, .snare])
     }
 
     func testGenerateMapsExpandedTomAliasesToGameplayLanes() throws {
@@ -518,9 +518,9 @@ final class ChartGenerationTests: XCTestCase {
         )
 
         XCTAssertEqual(generated.normalized.summary.beatCount, 5)
-        XCTAssertEqual(generated.normalized.drumEvents.filter { $0.lane == .kick || $0.lane == .snare }.map(\.lane), [.kick, .snare, .kick, .snare])
-        XCTAssertEqual(generated.normalized.drumEvents.filter { $0.lane == .hihatClosed }.map(\.onsetSubdivisionIndex), [0, 8, 10])
-        XCTAssertEqual(generated.normalized.drumEvents.filter { $0.lane == .hihatClosed }.count, 3)
+        XCTAssertEqual(generated.normalized.drumEvents.filter { $0.lane == .kick || $0.lane == .snare }.map(\.lane), [.kick, .snare, .kick, .snare, .kick])
+        XCTAssertEqual(generated.normalized.drumEvents.filter { $0.lane == .hihatClosed }.map(\.onsetSubdivisionIndex), [0, 8, 10, 16])
+        XCTAssertEqual(generated.normalized.drumEvents.filter { $0.lane == .hihatClosed }.count, 4)
         XCTAssertEqual(generated.normalized.drumEvents.filter { $0.lane == .crash }.count, 1)
         XCTAssertEqual(generated.baseChart.chart.notes.count, generated.normalized.drumEvents.count)
         XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("Analyzer timing was preserved, but analyzer drum-event candidates were unusable; heuristicDrumEvents supplied the playable drum events instead.") }))

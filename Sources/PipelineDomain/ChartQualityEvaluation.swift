@@ -78,6 +78,23 @@ public struct ChartQualityExpectation: Codable, Sendable {
     public let minimumScore: Double?
     public let focusedLaneExpectations: [FocusedLaneExpectation]
 
+    enum CodingKeys: String, CodingKey {
+        case difficulty
+        case noteCountRange
+        case measureCountRange
+        case requiredLanes
+        case allowedLanes
+        case minDistinctLanes
+        case maxSimultaneousNotes
+        case maxNotesPerBeat
+        case maxNotesPerMeasure
+        case maxConsecutiveSameLaneNotes
+        case maxMeasureBurstiness
+        case allowedEmptyMeasures
+        case minimumScore
+        case focusedLaneExpectations
+    }
+
     public init(
         difficulty: String,
         noteCountRange: IntRange? = nil,
@@ -108,6 +125,24 @@ public struct ChartQualityExpectation: Codable, Sendable {
         self.allowedEmptyMeasures = allowedEmptyMeasures
         self.minimumScore = minimumScore
         self.focusedLaneExpectations = focusedLaneExpectations
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        difficulty = try container.decode(String.self, forKey: .difficulty)
+        noteCountRange = try container.decodeIfPresent(IntRange.self, forKey: .noteCountRange)
+        measureCountRange = try container.decodeIfPresent(IntRange.self, forKey: .measureCountRange)
+        requiredLanes = try container.decodeIfPresent([DrumLane].self, forKey: .requiredLanes) ?? []
+        allowedLanes = try container.decodeIfPresent([DrumLane].self, forKey: .allowedLanes)
+        minDistinctLanes = try container.decodeIfPresent(Int.self, forKey: .minDistinctLanes)
+        maxSimultaneousNotes = try container.decodeIfPresent(Int.self, forKey: .maxSimultaneousNotes)
+        maxNotesPerBeat = try container.decodeIfPresent(Int.self, forKey: .maxNotesPerBeat)
+        maxNotesPerMeasure = try container.decodeIfPresent(Int.self, forKey: .maxNotesPerMeasure)
+        maxConsecutiveSameLaneNotes = try container.decodeIfPresent(Int.self, forKey: .maxConsecutiveSameLaneNotes)
+        maxMeasureBurstiness = try container.decodeIfPresent(Double.self, forKey: .maxMeasureBurstiness)
+        allowedEmptyMeasures = try container.decodeIfPresent(Int.self, forKey: .allowedEmptyMeasures)
+        minimumScore = try container.decodeIfPresent(Double.self, forKey: .minimumScore)
+        focusedLaneExpectations = try container.decodeIfPresent([FocusedLaneExpectation].self, forKey: .focusedLaneExpectations) ?? []
     }
 }
 
