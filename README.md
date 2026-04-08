@@ -200,6 +200,10 @@ swift run MasterOfDrumsPipeline doctor-audio-analyzer
 swift run MasterOfDrumsPipeline validate-audio-analyzer --source-uri file:///tmp/test.wav --source-type file --requested-by cli
 python3 ./scripts/test-analyzer-wrapper.py
 python3 ./scripts/test-compare-timing-paths.py
+python3 ./scripts/test-chart-summary.py
+
+# inspect a generated chart artifact without hand-scanning the full JSON
+python3 ./scripts/chart-summary.py /path/to/chart.modchart.json
 
 # compare the same source through primary-only vs forced-fallback timing paths
 python3 ./scripts/compare-timing-paths.py --input /tmp/test.wav --output-dir ./tmp/compare-test
