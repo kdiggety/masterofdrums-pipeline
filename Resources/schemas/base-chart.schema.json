@@ -11,6 +11,8 @@
     "chartStage",
     "status",
     "source",
+    "timingContractVersion",
+    "timing",
     "chart",
     "drumEventDiagnostics",
     "warnings",
@@ -34,6 +36,19 @@
         "sourceType": { "type": "string", "minLength": 1 },
         "sourceURI": { "type": "string", "minLength": 1 },
         "requestedBy": { "type": "string", "minLength": 1 }
+      }
+    },
+    "timingContractVersion": { "type": "string", "const": "0.1.0" },
+    "timing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["offsetSeconds", "ticksPerBeat", "timeSignature", "source"],
+      "properties": {
+        "bpm": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "offsetSeconds": { "type": "number" },
+        "ticksPerBeat": { "type": "integer", "minimum": 1 },
+        "timeSignature": { "$ref": "#/$defs/timeSignature" },
+        "source": { "type": "string", "enum": ["analyzer", "fallback"] }
       }
     },
     "chart": {

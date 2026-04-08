@@ -167,6 +167,8 @@ The base chart is the first chart-shaped artifact intended for deterministic val
 - `chartStage` — `base_chart_v1`
 - `status`
 - `source`
+- `timingContractVersion` — temporary timing handoff version, currently `0.1.0`
+- `timing`
 - `chart`
 - `warnings`
 - `note`
@@ -178,10 +180,20 @@ The base chart is the first chart-shaped artifact intended for deterministic val
 - `sourceURI`
 - `requestedBy`
 
+### `timing`
+
+Temporary chart timing contract surfaced on generated base-chart artifacts so downstream consumers can rely on a stable handoff without unpacking the full chart body.
+
+- `bpm`
+- `offsetSeconds`
+- `ticksPerBeat` — default proposed value: `480`
+- `timeSignature`
+- `source` — currently `analyzer` or `fallback`
+
 ### `chart`
 
 - `generatedAt`
-- `ticksPerBeat` — default proposed value: `480`
+- `ticksPerBeat`
 - `offsetSeconds`
 - `lanes`
 - `difficulty`
@@ -264,7 +276,7 @@ For the current slice, it prefers richer analyzer output when present (beat arra
 
 The key diagnostic distinction is that timing and drum events are sourced independently. In the common current path, `beat_this` contributes beat/downbeat timing, but drum-note placement still comes from `heuristicDrumEvents` because `beat_this` does not yet provide lane-level drum transcription for this pipeline. Runtime warnings and artifact notes now call out that split explicitly so it is obvious when timing is analyzer-backed but note events are still heuristic.
 
-Analyzer-driven drum-event shaping is intentionally conservative for prototype charts: kick/snare/crash structure is preserved, duplicate lane/slot hits are collapsed, and closed hi-hats are only retained when they help outline the groove. In practice that means kick/crash-anchored beats can keep a single pulse plus selective extra 1/16 texture on alternating beats, snare-only backbeats drop their accompanying closed-hat spam, hat-only sections fall back to sparse downbeat pulses, and the fully heuristic fallback groove now biases toward kick/snare backbone hits with hats mostly on beats 1/3 plus a single bar-leading upbeat pickup. That keeps beat-tracker-derived charts from turning into constant hi-hat walls while still leaving some rhythmic motion in the scaffold.
+Analyzer-driven drum-event shaping is intentionally conservative for prototype charts: kick/snare/crash structure is preserved, duplicate lane/slot hits are collapsed, and closed hi-hats are only retained when they help outline the groove. In practice that means kick/crash-anchored beats can keep a single closed-hat pulse plus selective extra 1/16 texture on alternating beats, snare-only backbeats still drop their accompanying closed-hat spam, hat-only sections fall back to sparse downbeat pulses, and clearly stronger analyzer confidence can now override the default beat-position kick/snare bias when both backbone lanes compete on the same beat. Tom-heavy beats now get fill-aware shaping: broader tom label aliases map cleanly into high/mid/low lanes, kick under a tom fill is favored over a default snare backbeat, hats are stripped back during tom phrases, and crash accents at the end of a tom run are allowed to survive even when the transition beat still has a backbone hit. Open-hat accents are also preserved separately from the closed-hat pulse cap when they survive quantization, so phrase punctuation is less likely to disappear into the generic hi-hat family. The fully heuristic fallback groove still biases toward kick/snare backbone hits with hats mostly on beats 1/3 plus a single bar-leading upbeat pickup. That keeps beat-tracker-derived charts from turning into constant hi-hat walls while still leaving some rhythmic motion in the scaffold.
 
 To make that reduction auditable, both `normalized_analysis` and `base_chart` now carry a `drumEventDiagnostics` object with `rawCandidateCount`, `mappedCandidateCount`, and `postShapingEventCount` plus drop/dedup details. The generator also emits warnings shaped like `Timing/events split: timing source=analyzer; drum-event source=heuristicDrumEvents.` and `Analyzer drum-event diagnostics: raw=12 mapped=9 post-shaping=5.` so logs immediately show whether `beat_this` only solved timing, whether analyzer drum events survived lane mapping, and where later shaping reduced them.
 

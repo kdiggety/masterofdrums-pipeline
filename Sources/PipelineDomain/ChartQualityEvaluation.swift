@@ -72,9 +72,28 @@ public struct ChartQualityExpectation: Codable, Sendable {
     public let maxSimultaneousNotes: Int?
     public let maxNotesPerBeat: Int?
     public let maxNotesPerMeasure: Int?
+    public let maxConsecutiveSameLaneNotes: Int?
+    public let maxMeasureBurstiness: Double?
     public let allowedEmptyMeasures: Int?
     public let minimumScore: Double?
     public let focusedLaneExpectations: [FocusedLaneExpectation]
+
+    enum CodingKeys: String, CodingKey {
+        case difficulty
+        case noteCountRange
+        case measureCountRange
+        case requiredLanes
+        case allowedLanes
+        case minDistinctLanes
+        case maxSimultaneousNotes
+        case maxNotesPerBeat
+        case maxNotesPerMeasure
+        case maxConsecutiveSameLaneNotes
+        case maxMeasureBurstiness
+        case allowedEmptyMeasures
+        case minimumScore
+        case focusedLaneExpectations
+    }
 
     public init(
         difficulty: String,
@@ -86,6 +105,8 @@ public struct ChartQualityExpectation: Codable, Sendable {
         maxSimultaneousNotes: Int? = nil,
         maxNotesPerBeat: Int? = nil,
         maxNotesPerMeasure: Int? = nil,
+        maxConsecutiveSameLaneNotes: Int? = nil,
+        maxMeasureBurstiness: Double? = nil,
         allowedEmptyMeasures: Int? = nil,
         minimumScore: Double? = nil,
         focusedLaneExpectations: [FocusedLaneExpectation] = []
@@ -99,9 +120,29 @@ public struct ChartQualityExpectation: Codable, Sendable {
         self.maxSimultaneousNotes = maxSimultaneousNotes
         self.maxNotesPerBeat = maxNotesPerBeat
         self.maxNotesPerMeasure = maxNotesPerMeasure
+        self.maxConsecutiveSameLaneNotes = maxConsecutiveSameLaneNotes
+        self.maxMeasureBurstiness = maxMeasureBurstiness
         self.allowedEmptyMeasures = allowedEmptyMeasures
         self.minimumScore = minimumScore
         self.focusedLaneExpectations = focusedLaneExpectations
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        difficulty = try container.decode(String.self, forKey: .difficulty)
+        noteCountRange = try container.decodeIfPresent(IntRange.self, forKey: .noteCountRange)
+        measureCountRange = try container.decodeIfPresent(IntRange.self, forKey: .measureCountRange)
+        requiredLanes = try container.decodeIfPresent([DrumLane].self, forKey: .requiredLanes) ?? []
+        allowedLanes = try container.decodeIfPresent([DrumLane].self, forKey: .allowedLanes)
+        minDistinctLanes = try container.decodeIfPresent(Int.self, forKey: .minDistinctLanes)
+        maxSimultaneousNotes = try container.decodeIfPresent(Int.self, forKey: .maxSimultaneousNotes)
+        maxNotesPerBeat = try container.decodeIfPresent(Int.self, forKey: .maxNotesPerBeat)
+        maxNotesPerMeasure = try container.decodeIfPresent(Int.self, forKey: .maxNotesPerMeasure)
+        maxConsecutiveSameLaneNotes = try container.decodeIfPresent(Int.self, forKey: .maxConsecutiveSameLaneNotes)
+        maxMeasureBurstiness = try container.decodeIfPresent(Double.self, forKey: .maxMeasureBurstiness)
+        allowedEmptyMeasures = try container.decodeIfPresent(Int.self, forKey: .allowedEmptyMeasures)
+        minimumScore = try container.decodeIfPresent(Double.self, forKey: .minimumScore)
+        focusedLaneExpectations = try container.decodeIfPresent([FocusedLaneExpectation].self, forKey: .focusedLaneExpectations) ?? []
     }
 }
 
@@ -171,6 +212,7 @@ public struct ChartQualityReport: Codable, Sendable {
             "lane_usage \(regressionSnapshot.laneUsage.map { "\($0.lane)=\($0.noteCount)" }.joined(separator: " "))",
             "focused_lane_balance \(focusedLaneText)",
             "measure_density \(regressionSnapshot.measureDensity.map { "m\($0.measureIndex)=\($0.noteCount)" }.joined(separator: " "))",
+            "quality_flags same_lane_streak=\(metrics.maxConsecutiveSameLaneNotes) measure_burstiness=\(Self.format(metrics.maxMeasureBurstiness))",
             "note_preview \(regressionSnapshot.notePreview.joined(separator: " | "))",
             "issues \(issueText)"
         ].joined(separator: "\n")
@@ -200,6 +242,8 @@ public struct ChartQualityMetrics: Codable, Sendable {
     public let maxSimultaneousNotes: Int
     public let maxNotesPerBeat: Int
     public let maxNotesPerMeasure: Int
+    public let maxConsecutiveSameLaneNotes: Int
+    public let maxMeasureBurstiness: Double
     public let emptyMeasureCount: Int
     public let averageNotesPerMeasure: Double
 
@@ -214,6 +258,8 @@ public struct ChartQualityMetrics: Codable, Sendable {
         maxSimultaneousNotes: Int,
         maxNotesPerBeat: Int,
         maxNotesPerMeasure: Int,
+        maxConsecutiveSameLaneNotes: Int,
+        maxMeasureBurstiness: Double,
         emptyMeasureCount: Int,
         averageNotesPerMeasure: Double
     ) {
@@ -227,6 +273,8 @@ public struct ChartQualityMetrics: Codable, Sendable {
         self.maxSimultaneousNotes = maxSimultaneousNotes
         self.maxNotesPerBeat = maxNotesPerBeat
         self.maxNotesPerMeasure = maxNotesPerMeasure
+        self.maxConsecutiveSameLaneNotes = maxConsecutiveSameLaneNotes
+        self.maxMeasureBurstiness = maxMeasureBurstiness
         self.emptyMeasureCount = emptyMeasureCount
         self.averageNotesPerMeasure = averageNotesPerMeasure
     }
@@ -369,6 +417,7 @@ public struct ChartEvaluationResult: Codable, Sendable {
     public let baselineChartID: String?
     public let report: ChartQualityReport
     public let expectation: ChartQualityExpectation
+    public let comparison: ChartMetricsComparison?
 
     public var summaryLine: String {
         let durationText = clipDurationSeconds.map { String(format: "%.2fs", $0) } ?? "unknown"
@@ -395,7 +444,8 @@ public struct ChartEvaluationResult: Codable, Sendable {
         baselineStatus: String?,
         baselineChartID: String?,
         expectation: ChartQualityExpectation,
-        report: ChartQualityReport
+        report: ChartQualityReport,
+        comparison: ChartMetricsComparison? = nil
     ) {
         self.songID = songID
         self.songTitle = songTitle
@@ -409,6 +459,7 @@ public struct ChartEvaluationResult: Codable, Sendable {
         self.baselineChartID = baselineChartID
         self.expectation = expectation
         self.report = report
+        self.comparison = comparison
     }
 }
 
@@ -461,11 +512,14 @@ public struct ChartEvaluationCorpusOperatorSummary: Codable, Sendable {
     public let failedExpectations: Int
     public let missingChartCount: Int
     public let lintIssueCount: Int
+    public let comparisonCount: Int
+    public let severeRegressionCount: Int
     public let missingCharts: [String]
     public let topTags: [String]
     public let sourceTypes: [String]
     public let reviewStates: [String]
     public let baselineStates: [String]
+    public let comparisonStates: [String]
 
     public init(
         schemaVersion: String,
@@ -476,11 +530,14 @@ public struct ChartEvaluationCorpusOperatorSummary: Codable, Sendable {
         failedExpectations: Int,
         missingChartCount: Int,
         lintIssueCount: Int,
+        comparisonCount: Int,
+        severeRegressionCount: Int,
         missingCharts: [String],
         topTags: [String],
         sourceTypes: [String],
         reviewStates: [String],
-        baselineStates: [String]
+        baselineStates: [String],
+        comparisonStates: [String]
     ) {
         self.schemaVersion = schemaVersion
         self.generatedAt = generatedAt
@@ -490,11 +547,14 @@ public struct ChartEvaluationCorpusOperatorSummary: Codable, Sendable {
         self.failedExpectations = failedExpectations
         self.missingChartCount = missingChartCount
         self.lintIssueCount = lintIssueCount
+        self.comparisonCount = comparisonCount
+        self.severeRegressionCount = severeRegressionCount
         self.missingCharts = missingCharts
         self.topTags = topTags
         self.sourceTypes = sourceTypes
         self.reviewStates = reviewStates
         self.baselineStates = baselineStates
+        self.comparisonStates = comparisonStates
     }
 }
 
@@ -518,6 +578,9 @@ public struct ChartEvaluationCorpusReport: Codable, Sendable {
     public let failedExpectations: Int
     public let results: [ChartEvaluationResult]
     public let missingCharts: [String]
+    public let comparisonCount: Int
+    public let severeRegressionCount: Int
+    public let comparisonStatusSummaries: [CorpusValueSummary]
     public let tagSummaries: [CorpusTagSummary]
     public let difficultySummaries: [CorpusDifficultySummary]
     public let sourceTypeSummaries: [CorpusValueSummary]
@@ -530,7 +593,7 @@ public struct ChartEvaluationCorpusReport: Codable, Sendable {
     }
 
     public var summary: String {
-        "corpus pass=\(passedExpectations)/\(totalExpectations) failed=\(failedExpectations) missing=\(missingCharts.count) tags=\(tagSummaries.count) lint=\(lintIssues.count)"
+        "corpus pass=\(passedExpectations)/\(totalExpectations) failed=\(failedExpectations) missing=\(missingCharts.count) comparisons=\(comparisonCount) tags=\(tagSummaries.count) lint=\(lintIssues.count)"
     }
 
     public var operatorSummary: ChartEvaluationCorpusOperatorSummary {
@@ -543,11 +606,14 @@ public struct ChartEvaluationCorpusReport: Codable, Sendable {
             failedExpectations: failedExpectations,
             missingChartCount: missingCharts.count,
             lintIssueCount: lintIssues.count,
+            comparisonCount: comparisonCount,
+            severeRegressionCount: severeRegressionCount,
             missingCharts: missingCharts,
             topTags: tagSummaries.map(\.tag),
             sourceTypes: sourceTypeSummaries.map(\.key),
             reviewStates: reviewStatusSummaries.map(\.key),
-            baselineStates: baselineStatusSummaries.map(\.key)
+            baselineStates: baselineStatusSummaries.map(\.key),
+            comparisonStates: comparisonStatusSummaries.map(\.key)
         )
     }
 
@@ -565,6 +631,9 @@ public struct ChartEvaluationCorpusReport: Codable, Sendable {
         }
         if !baselineStatusSummaries.isEmpty {
             lines.append("baseline_summary " + baselineStatusSummaries.map { "\($0.key)=\($0.count)" }.joined(separator: " "))
+        }
+        if !comparisonStatusSummaries.isEmpty {
+            lines.append("comparison_summary " + comparisonStatusSummaries.map { "\($0.key)=\($0.count)" }.joined(separator: " ") + " severe=\(severeRegressionCount)")
         }
         if !tagSummaries.isEmpty {
             lines.append("tag_summary " + tagSummaries.map { "\($0.tag)=\($0.passedExpectations)/\($0.totalExpectations)" }.joined(separator: " "))
@@ -587,6 +656,9 @@ public struct ChartEvaluationCorpusReport: Codable, Sendable {
             if let provenanceLine = result.provenanceLine {
                 lines.append(provenanceLine)
             }
+            if let comparison = result.comparison {
+                lines.append(comparison.summary)
+            }
             lines.append(result.report.regressionSummary)
         }
         if !missingCharts.isEmpty {
@@ -603,6 +675,9 @@ public struct ChartEvaluationCorpusReport: Codable, Sendable {
         failedExpectations: Int,
         results: [ChartEvaluationResult],
         missingCharts: [String],
+        comparisonCount: Int,
+        severeRegressionCount: Int,
+        comparisonStatusSummaries: [CorpusValueSummary],
         tagSummaries: [CorpusTagSummary],
         difficultySummaries: [CorpusDifficultySummary],
         sourceTypeSummaries: [CorpusValueSummary],
@@ -617,6 +692,9 @@ public struct ChartEvaluationCorpusReport: Codable, Sendable {
         self.failedExpectations = failedExpectations
         self.results = results
         self.missingCharts = missingCharts
+        self.comparisonCount = comparisonCount
+        self.severeRegressionCount = severeRegressionCount
+        self.comparisonStatusSummaries = comparisonStatusSummaries
         self.tagSummaries = tagSummaries
         self.difficultySummaries = difficultySummaries
         self.sourceTypeSummaries = sourceTypeSummaries
@@ -683,16 +761,19 @@ public enum ChartEvaluationRunner {
     public static func evaluate(
         corpus: ChartEvaluationCorpus,
         generatedCharts: [String: [String: BaseChartContract]],
+        baselineCharts: [String: [String: BaseChartContract]] = [:],
         generatedAt: Date = Date()
     ) -> ChartEvaluationCorpusReport {
         var results: [ChartEvaluationResult] = []
         var missingCharts: [String] = []
+        var comparisonCount = 0
         var tagStats: [String: (total: Int, passed: Int)] = [:]
         var difficultyStats: [String: (total: Int, passed: Int, missing: Int)] = [:]
         let lintIssues = ChartEvaluationCorpusLinter.lint(corpus)
 
         for song in corpus.songs {
             let chartsForSong = generatedCharts[song.id] ?? [:]
+            let baselineChartsForSong = baselineCharts[song.id] ?? [:]
             for expectation in song.expectations {
                 for tag in song.tags {
                     let current = tagStats[tag] ?? (0, 0)
@@ -708,6 +789,13 @@ public enum ChartEvaluationRunner {
                     continue
                 }
                 let report = ChartQualityEvaluator.evaluate(chart: chart, against: expectation)
+                let comparison = baselineChartsForSong[expectation.difficulty].map {
+                    let baselineReport = ChartQualityEvaluator.evaluate(chart: $0, against: expectation)
+                    return ChartMetricsComparator.compare(baseline: baselineReport, candidate: report)
+                }
+                if comparison != nil {
+                    comparisonCount += 1
+                }
                 if report.passed {
                     for tag in song.tags {
                         let current = tagStats[tag] ?? (0, 0)
@@ -729,7 +817,8 @@ public enum ChartEvaluationRunner {
                         baselineStatus: song.baselineStatus,
                         baselineChartID: song.baselineChartID,
                         expectation: expectation,
-                        report: report
+                        report: report,
+                        comparison: comparison
                     )
                 )
             }
@@ -738,6 +827,8 @@ public enum ChartEvaluationRunner {
         let passedExpectations = results.filter { $0.report.passed }.count
         let failedExpectations = results.count - passedExpectations + missingCharts.count
         let totalExpectations = corpus.songs.reduce(0) { $0 + $1.expectations.count }
+        let comparisonStatuses = results.compactMap { $0.comparison?.status }
+        let severeRegressionCount = results.filter { $0.comparison?.status == "regressed" }.count
         let tagSummaries = tagStats.keys.sorted().map { tag in
             let stats = tagStats[tag] ?? (0, 0)
             return CorpusTagSummary(
@@ -766,6 +857,9 @@ public enum ChartEvaluationRunner {
             failedExpectations: failedExpectations,
             results: results,
             missingCharts: missingCharts.sorted(),
+            comparisonCount: comparisonCount,
+            severeRegressionCount: severeRegressionCount,
+            comparisonStatusSummaries: summarizeValues(comparisonStatuses),
             tagSummaries: tagSummaries,
             difficultySummaries: difficultySummaries,
             sourceTypeSummaries: summarizeValues(corpus.songs.map(\.sourceType)),
@@ -785,10 +879,17 @@ public enum ChartEvaluationRunner {
 public struct ChartMetricsComparison: Codable, Sendable {
     public let baselineDifficulty: String
     public let candidateDifficulty: String
+    public let baselinePassed: Bool
+    public let candidatePassed: Bool
+    public let scoreDelta: Double
     public let noteCountDelta: Int
     public let measureCountDelta: Int
     public let averageNotesPerMeasureDelta: Double
     public let focusedLaneDeltas: [FocusedLaneDelta]
+    public let previewAdded: [String]
+    public let previewRemoved: [String]
+    public let status: String
+    public let highlights: [String]
 
     public var summary: String {
         let laneText = focusedLaneDeltas.isEmpty
@@ -801,23 +902,41 @@ public struct ChartMetricsComparison: Codable, Sendable {
         let noteDelta = noteCountDelta >= 0 ? "+\(noteCountDelta)" : "\(noteCountDelta)"
         let measureDelta = measureCountDelta >= 0 ? "+\(measureCountDelta)" : "\(measureCountDelta)"
         let densityDelta = averageNotesPerMeasureDelta >= 0 ? "+\(Self.format(averageNotesPerMeasureDelta))" : Self.format(averageNotesPerMeasureDelta)
-        return "compare baseline=\(baselineDifficulty) candidate=\(candidateDifficulty) notes=\(noteDelta) measures=\(measureDelta) avg_notes_per_measure=\(densityDelta) focused=\(laneText)"
+        let scoreDeltaText = scoreDelta >= 0 ? "+\(Self.format(scoreDelta))" : Self.format(scoreDelta)
+        let previewAddedText = previewAdded.isEmpty ? "none" : previewAdded.joined(separator: " | ")
+        let previewRemovedText = previewRemoved.isEmpty ? "none" : previewRemoved.joined(separator: " | ")
+        let highlightText = highlights.isEmpty ? "none" : highlights.joined(separator: "; ")
+        return "compare status=\(status) baseline=\(baselineDifficulty) candidate=\(candidateDifficulty) pass=\(baselinePassed)->\(candidatePassed) score=\(scoreDeltaText) notes=\(noteDelta) measures=\(measureDelta) avg_notes_per_measure=\(densityDelta) focused=\(laneText) highlights=\(highlightText) preview_added=\(previewAddedText) preview_removed=\(previewRemovedText)"
     }
 
     public init(
         baselineDifficulty: String,
         candidateDifficulty: String,
+        baselinePassed: Bool,
+        candidatePassed: Bool,
+        scoreDelta: Double,
         noteCountDelta: Int,
         measureCountDelta: Int,
         averageNotesPerMeasureDelta: Double,
-        focusedLaneDeltas: [FocusedLaneDelta]
+        focusedLaneDeltas: [FocusedLaneDelta],
+        previewAdded: [String],
+        previewRemoved: [String],
+        status: String,
+        highlights: [String]
     ) {
         self.baselineDifficulty = baselineDifficulty
         self.candidateDifficulty = candidateDifficulty
+        self.baselinePassed = baselinePassed
+        self.candidatePassed = candidatePassed
+        self.scoreDelta = scoreDelta
         self.noteCountDelta = noteCountDelta
         self.measureCountDelta = measureCountDelta
         self.averageNotesPerMeasureDelta = averageNotesPerMeasureDelta
         self.focusedLaneDeltas = focusedLaneDeltas
+        self.previewAdded = previewAdded
+        self.previewRemoved = previewRemoved
+        self.status = status
+        self.highlights = highlights
     }
 
     private static func format(_ value: Double) -> String {
@@ -874,14 +993,124 @@ public enum ChartMetricsComparator {
             )
         }
 
+        let baselinePreview = Set(baseline.regressionSnapshot.notePreview)
+        let candidatePreview = Set(candidate.regressionSnapshot.notePreview)
+        let previewAdded = candidatePreview.subtracting(baselinePreview).sorted()
+        let previewRemoved = baselinePreview.subtracting(candidatePreview).sorted()
+        let noteCountDelta = candidate.metrics.noteCount - baseline.metrics.noteCount
+        let measureCountDelta = candidate.metrics.measureCount - baseline.metrics.measureCount
+        let averageNotesPerMeasureDelta = candidate.metrics.averageNotesPerMeasure - baseline.metrics.averageNotesPerMeasure
+        let scoreDelta = candidate.score - baseline.score
+        let assessment = assess(
+            baseline: baseline,
+            candidate: candidate,
+            noteCountDelta: noteCountDelta,
+            averageNotesPerMeasureDelta: averageNotesPerMeasureDelta,
+            focusedLaneDeltas: focusedLaneDeltas,
+            previewAdded: previewAdded,
+            previewRemoved: previewRemoved,
+            scoreDelta: scoreDelta
+        )
+
         return ChartMetricsComparison(
             baselineDifficulty: baseline.difficulty,
             candidateDifficulty: candidate.difficulty,
-            noteCountDelta: candidate.metrics.noteCount - baseline.metrics.noteCount,
-            measureCountDelta: candidate.metrics.measureCount - baseline.metrics.measureCount,
-            averageNotesPerMeasureDelta: candidate.metrics.averageNotesPerMeasure - baseline.metrics.averageNotesPerMeasure,
-            focusedLaneDeltas: focusedLaneDeltas
+            baselinePassed: baseline.passed,
+            candidatePassed: candidate.passed,
+            scoreDelta: scoreDelta,
+            noteCountDelta: noteCountDelta,
+            measureCountDelta: measureCountDelta,
+            averageNotesPerMeasureDelta: averageNotesPerMeasureDelta,
+            focusedLaneDeltas: focusedLaneDeltas,
+            previewAdded: previewAdded,
+            previewRemoved: previewRemoved,
+            status: assessment.status,
+            highlights: assessment.highlights
         )
+    }
+
+    private static func assess(
+        baseline: ChartQualityReport,
+        candidate: ChartQualityReport,
+        noteCountDelta: Int,
+        averageNotesPerMeasureDelta: Double,
+        focusedLaneDeltas: [FocusedLaneDelta],
+        previewAdded: [String],
+        previewRemoved: [String],
+        scoreDelta: Double
+    ) -> (status: String, highlights: [String]) {
+        if baseline.passed && !candidate.passed {
+            let issues = candidate.issues.map(\.code).joined(separator: ",")
+            return ("regressed", ["baseline passed but candidate failed", issues.isEmpty ? "candidate introduced new quality failures" : "candidate issues=\(issues)"])
+        }
+        if !baseline.passed && candidate.passed {
+            return ("improved", ["baseline failed but candidate passed", "score_delta=\(format(scoreDelta))"])
+        }
+
+        var watchReasons: [String] = []
+        var regressReasons: [String] = []
+        var improveReasons: [String] = []
+
+        if scoreDelta <= -0.15 {
+            regressReasons.append("score_drop=\(format(scoreDelta))")
+        } else if scoreDelta <= -0.05 {
+            watchReasons.append("score_drop=\(format(scoreDelta))")
+        } else if scoreDelta >= 0.10 {
+            improveReasons.append("score_gain=+\(format(scoreDelta))")
+        }
+
+        let noteDriftRatio = abs(Double(noteCountDelta)) / Double(max(baseline.metrics.noteCount, 1))
+        if noteDriftRatio >= 0.35 {
+            regressReasons.append("note_drift=\(signed(noteCountDelta)) (\(format(noteDriftRatio * 100))%)")
+        } else if noteDriftRatio >= 0.18 {
+            watchReasons.append("note_drift=\(signed(noteCountDelta)) (\(format(noteDriftRatio * 100))%)")
+        }
+
+        let densityDrift = abs(averageNotesPerMeasureDelta)
+        if densityDrift >= 1.5 {
+            regressReasons.append("density_shift=\(signed(averageNotesPerMeasureDelta))")
+        } else if densityDrift >= 0.75 {
+            watchReasons.append("density_shift=\(signed(averageNotesPerMeasureDelta))")
+        }
+
+        let maxShareDelta = focusedLaneDeltas.map { abs($0.noteShareDelta) }.max() ?? 0
+        if let biggestLane = focusedLaneDeltas.max(by: { abs($0.noteShareDelta) < abs($1.noteShareDelta) }) {
+            if maxShareDelta >= 0.18 {
+                regressReasons.append("focused_lane_shift=\(biggestLane.lane.rawValue)@\(signed(biggestLane.noteShareDelta))")
+            } else if maxShareDelta >= 0.08 {
+                watchReasons.append("focused_lane_shift=\(biggestLane.lane.rawValue)@\(signed(biggestLane.noteShareDelta))")
+            }
+        }
+
+        let previewChurn = previewAdded.count + previewRemoved.count
+        if previewChurn >= 8 {
+            regressReasons.append("preview_churn=\(previewChurn)")
+        } else if previewChurn >= 4 {
+            watchReasons.append("preview_churn=\(previewChurn)")
+        }
+
+        if !regressReasons.isEmpty {
+            return ("regressed", regressReasons)
+        }
+        if !watchReasons.isEmpty {
+            return ("watch", watchReasons)
+        }
+        if !improveReasons.isEmpty {
+            return ("improved", improveReasons)
+        }
+        return ("stable", ["within_regression_thresholds"])
+    }
+
+    private static func signed(_ value: Int) -> String {
+        value >= 0 ? "+\(value)" : "\(value)"
+    }
+
+    private static func signed(_ value: Double) -> String {
+        value >= 0 ? "+\(format(value))" : format(value)
+    }
+
+    private static func format(_ value: Double) -> String {
+        String(format: "%.2f", value)
     }
 }
 
@@ -983,6 +1212,24 @@ public enum ChartQualityEvaluator {
             penalty += min(0.15, 0.03 * Double(metrics.maxNotesPerMeasure - maxNotesPerMeasure))
         }
 
+        if let maxConsecutiveSameLaneNotes = expectation.maxConsecutiveSameLaneNotes,
+           metrics.maxConsecutiveSameLaneNotes > maxConsecutiveSameLaneNotes {
+            issues.append(.init(
+                code: "same_lane_streak_too_long",
+                message: "Expected at most \(maxConsecutiveSameLaneNotes) consecutive notes on the same lane but saw \(metrics.maxConsecutiveSameLaneNotes)."
+            ))
+            penalty += min(0.15, 0.04 * Double(metrics.maxConsecutiveSameLaneNotes - maxConsecutiveSameLaneNotes))
+        }
+
+        if let maxMeasureBurstiness = expectation.maxMeasureBurstiness,
+           metrics.maxMeasureBurstiness > maxMeasureBurstiness {
+            issues.append(.init(
+                code: "measure_burstiness_too_high",
+                message: "Expected measure burstiness <= \(format(maxMeasureBurstiness)) but saw \(format(metrics.maxMeasureBurstiness))."
+            ))
+            penalty += proportionalPenalty(actual: metrics.maxMeasureBurstiness, expectedRange: DoubleRange(min: 0, max: maxMeasureBurstiness), cap: 0.15)
+        }
+
         if let allowedEmptyMeasures = expectation.allowedEmptyMeasures,
            metrics.emptyMeasureCount > allowedEmptyMeasures {
             issues.append(.init(
@@ -1068,6 +1315,8 @@ public enum ChartQualityEvaluator {
         let countedMeasures = Set(notesPerMeasure.keys.compactMap { $0 })
         let emptyMeasureCount = max(0, measureCount - countedMeasures.count)
         let averageNotesPerMeasure = measureCount > 0 ? Double(noteCount) / Double(measureCount) : 0
+        let maxMeasureBurstiness = averageNotesPerMeasure > 0 ? Double(maxNotesPerMeasure) / averageNotesPerMeasure : 0
+        let maxConsecutiveSameLaneNotes = longestSameLaneRun(in: chart.chart.notes)
 
         let laneUsage = Dictionary(grouping: chart.chart.notes, by: \.lane)
             .map { LaneUsageMetric(lane: $0.key, noteCount: $0.value.count) }
@@ -1111,6 +1360,8 @@ public enum ChartQualityEvaluator {
             maxSimultaneousNotes: maxSimultaneousNotes,
             maxNotesPerBeat: maxNotesPerBeat,
             maxNotesPerMeasure: maxNotesPerMeasure,
+            maxConsecutiveSameLaneNotes: maxConsecutiveSameLaneNotes,
+            maxMeasureBurstiness: maxMeasureBurstiness,
             emptyMeasureCount: emptyMeasureCount,
             averageNotesPerMeasure: averageNotesPerMeasure
         )
@@ -1151,6 +1402,31 @@ public enum ChartQualityEvaluator {
             }
         }
         return nil
+    }
+
+    private static func longestSameLaneRun(in notes: [BaseChartNote]) -> Int {
+        let orderedNotes = notes.sorted {
+            if $0.tick == $1.tick {
+                return $0.lane.rawValue < $1.lane.rawValue
+            }
+            return $0.tick < $1.tick
+        }
+
+        var best = 0
+        var currentLane: DrumLane?
+        var currentRun = 0
+
+        for note in orderedNotes {
+            if note.lane == currentLane {
+                currentRun += 1
+            } else {
+                currentLane = note.lane
+                currentRun = 1
+            }
+            best = max(best, currentRun)
+        }
+
+        return best
     }
 
     private static func proportionalPenalty(actual: Int, expectedRange: IntRange, cap: Double) -> Double {

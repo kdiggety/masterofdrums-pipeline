@@ -2,6 +2,10 @@
 
 This repo now has a more concrete story-5 loop: a small corpus fixture, an evaluator, and a regression-friendly report shape that can describe generated charts without snapshotting brittle full JSON artifacts.
 
+Wave 1 corpus expansion note: the fixture now includes both an awaiting-review template row and an approved-baseline real-clip exemplar so report output and tests exercise a more realistic review lifecycle instead of only synthetic scaffolding.
+
+Wave 2 coverage note: the checked-in corpus also now carries manifest-only real-clip rows for syncopated hi-hat grooves, tom/crash transition fills, and sparse-to-dense section changes, so remaining weak musical cases have explicit metadata, checklist targets, and expectation envelopes even before more licensed audio lands.
+
 This phase pushes the seam closer to real-clip usage by making the corpus manifest more review-oriented, adding lintable metadata expectations, and expanding the report so humans can tell what kind of set they are reviewing before drilling into note previews.
 
 ## What this slice adds
@@ -105,6 +109,9 @@ That is still intentionally compact, but it is now closer to a real review corpu
 - baseline metadata can record which chart or snapshot a human signed off on
 - review notes/checklists can capture why a clip exists and what future reviewers should watch for
 - missing generated charts are reported explicitly instead of silently skipped
+- the checked-in fixture now demonstrates two real-clip states on purpose:
+  - `real-review-template` as a pending-review placeholder
+  - `licensed-breakbeat-a` as an approved-baseline exemplar with focused-lane guardrails for kick/snare/closed-hat balance
 
 ## Corpus linting
 
@@ -139,6 +146,8 @@ Given a `BaseChartContract`, the evaluator computes:
 - maximum simultaneous notes at one tick
 - maximum notes inside one beat
 - maximum notes inside one measure
+- longest same-lane streak across the chart (`maxConsecutiveSameLaneNotes`)
+- measure burstiness as `busiest_measure_density / average_measure_density` (`maxMeasureBurstiness`)
 - empty measure count
 - average notes per measure
 
@@ -169,7 +178,7 @@ The current report avoids that by projecting the chart into a stable snapshot wi
 
 That is deliberately opinionated: it keeps the parts of the generated chart that matter for structural regressions, while ignoring volatile IDs and timestamps.
 
-There is also now a tiny comparison helper for before/after tuning work: `ChartMetricsComparator.compare(baseline:candidate:)`. It does not attempt a full diff. It answers the practical questions that come up when analyzer mapping changes:
+There is also now a tiny comparison helper for before/after tuning work: `ChartMetricsComparator.compare(baseline:candidate:)`. It does not attempt a full diff. It now also assigns an operator-facing regression status (`stable`, `improved`, `watch`, `regressed`) plus short highlight reasons so corpus runs do not require humans to mentally score every delta line. It answers the practical questions that come up when analyzer mapping changes:
 
 - did total note count go up or down?
 - did notes-per-measure get denser or sparser?
@@ -177,6 +186,18 @@ There is also now a tiny comparison helper for before/after tuning work: `ChartM
 - did their shares of the chart drift even if the absolute counts changed?
 
 That gives chart-generation iteration a cheap way to say “this version got 2 notes denser and shifted 8% more of the chart onto kick” without snapshotting entire artifacts.
+
+Current built-in tuning thresholds are intentionally simple and validation-friendly:
+
+- baseline pass → candidate fail = `regressed`
+- baseline fail → candidate pass = `improved`
+- score drop ≥ `0.15` = `regressed`, ≥ `0.05` = `watch`
+- note-count drift ≥ `35%` of baseline = `regressed`, ≥ `18%` = `watch`
+- average notes/measure drift ≥ `1.5` = `regressed`, ≥ `0.75` = `watch`
+- focused kick/snare/closed-hat share drift ≥ `0.18` = `regressed`, ≥ `0.08` = `watch`
+- note-preview churn (added + removed preview notes) ≥ `8` = `regressed`, ≥ `4` = `watch`
+
+Those thresholds are not pretending to be musically final. They are there to surface suspicious backend/mapping/shaping changes early and consistently in corpus output.
 
 For real clips, this is a better regression-review shape because:
 
@@ -201,7 +222,7 @@ For real clips, this is a better regression-review shape because:
 - `renderText()` output intended for regression assertions and future CLI printing
 - `operatorSummary` / `packagedReport()` helpers so wrappers or CI upload steps can carry a compact machine-readable status plus the full text report without inventing a second ad-hoc schema
 
-Example report shape:
+Example report shape (illustrative; the checked-in fixture now also includes an approved-baseline real clip exemplar, so live counts may be slightly larger):
 
 ```text
 corpus pass=1/3 failed=2 missing=2 tags=6 lint=0
@@ -307,5 +328,7 @@ The evaluator still uses the same domain scoring/reporting path, but expectation
 - snare share / notes-per-measure range
 - hi-hat share / notes-per-measure range
 - per-lane min/max note-count guardrails
+- `maxConsecutiveSameLaneNotes` to catch repeated-pattern fatigue like long kick-only or hi-hat-only runs
+- `maxMeasureBurstiness` to catch one measure suddenly getting much denser than the rest of the chart
 
 That makes the harness better at flagging obvious misses and suspicious over-generation even when a chart still technically contains the required lanes.

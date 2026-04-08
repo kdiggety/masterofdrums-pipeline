@@ -264,12 +264,15 @@ public enum DrumLane: String, Codable, Sendable, CaseIterable {
 public struct BaseChartContract: Codable, Sendable {
     public static let schemaVersion = "1.0.0"
     public static let schemaURI = "https://masterofdrums.dev/schemas/base-chart.schema.json"
+    public static let timingContractVersion = "0.1.0"
 
     public let schemaVersion: String
     public let schemaURI: String
     public let chartStage: String
     public let status: String
     public let source: BaseChartSource
+    public let timingContractVersion: String
+    public let timing: BaseChartTiming
     public let chart: BaseChartData
     public let drumEventDiagnostics: DrumEventDiagnostics?
     public let warnings: [String]
@@ -281,6 +284,8 @@ public struct BaseChartContract: Codable, Sendable {
         chartStage: String = "base_chart_v1",
         status: String = "completed",
         source: BaseChartSource,
+        timingContractVersion: String = Self.timingContractVersion,
+        timing: BaseChartTiming,
         chart: BaseChartData,
         drumEventDiagnostics: DrumEventDiagnostics? = nil,
         warnings: [String] = [],
@@ -291,6 +296,8 @@ public struct BaseChartContract: Codable, Sendable {
         self.chartStage = chartStage
         self.status = status
         self.source = source
+        self.timingContractVersion = timingContractVersion
+        self.timing = timing
         self.chart = chart
         self.drumEventDiagnostics = drumEventDiagnostics
         self.warnings = warnings
@@ -315,6 +322,22 @@ public struct BaseChartSource: Codable, Sendable {
         self.sourceType = sourceType
         self.sourceURI = sourceURI
         self.requestedBy = requestedBy
+    }
+}
+
+public struct BaseChartTiming: Codable, Sendable {
+    public let bpm: Double?
+    public let offsetSeconds: Double
+    public let ticksPerBeat: Int
+    public let timeSignature: TimeSignature
+    public let source: String
+
+    public init(bpm: Double?, offsetSeconds: Double, ticksPerBeat: Int, timeSignature: TimeSignature, source: String) {
+        self.bpm = bpm
+        self.offsetSeconds = offsetSeconds
+        self.ticksPerBeat = ticksPerBeat
+        self.timeSignature = timeSignature
+        self.source = source
     }
 }
 

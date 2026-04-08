@@ -20,7 +20,7 @@ public enum PipelineCLICommand: Equatable {
     case showJob(id: String)
     case listEvents(workflowID: String?, jobID: String?, limit: Int)
     case listArtifacts(workflowID: String?, jobID: String?, limit: Int)
-    case evaluateChartCorpus(corpusPath: String, chartsDirectory: String, songID: String?, tag: String?, outputPath: String?, textOutputPath: String?)
+    case evaluateChartCorpus(corpusPath: String, chartsDirectory: String, baselineChartsDirectory: String?, songID: String?, tag: String?, outputPath: String?, textOutputPath: String?)
     case help
 }
 
@@ -156,10 +156,11 @@ public struct PipelineRuntime {
                 }
             }
 
-        case .evaluateChartCorpus(let corpusPath, let chartsDirectory, let songID, let tag, let outputPath, let textOutputPath):
+        case .evaluateChartCorpus(let corpusPath, let chartsDirectory, let baselineChartsDirectory, let songID, let tag, let outputPath, let textOutputPath):
             let packaged = try Self.evaluateChartCorpus(
                 corpusPath: corpusPath,
                 chartsDirectory: chartsDirectory,
+                baselineChartsDirectory: baselineChartsDirectory,
                 songID: songID,
                 tag: tag,
                 outputPath: outputPath,
@@ -175,6 +176,7 @@ public struct PipelineRuntime {
     private static func evaluateChartCorpus(
         corpusPath: String,
         chartsDirectory: String,
+        baselineChartsDirectory: String?,
         songID: String?,
         tag: String?,
         outputPath: String?,
@@ -182,9 +184,11 @@ public struct PipelineRuntime {
     ) throws -> ChartEvaluationCorpusPackagedReport {
         let corpusURL = URL(fileURLWithPath: corpusPath)
         let chartsDirectoryURL = URL(fileURLWithPath: chartsDirectory, isDirectory: true)
+        let baselineChartsDirectoryURL = baselineChartsDirectory.map { URL(fileURLWithPath: $0, isDirectory: true) }
         let packaged = try ChartCorpusEvaluatorHarness.evaluate(
             corpusURL: corpusURL,
             chartsDirectoryURL: chartsDirectoryURL,
+            baselineChartsDirectoryURL: baselineChartsDirectoryURL,
             selection: .init(songID: songID, tag: tag)
         )
 
@@ -1038,7 +1042,7 @@ public struct PipelineRuntime {
       show-job <job-id>
       list-events [--workflow-id <workflow-id>] [--job-id <job-id>] [--limit <count>]
       list-artifacts [--workflow-id <workflow-id>] [--job-id <job-id>] [--limit <count>]
-      evaluate-chart-corpus --corpus <path> --charts-dir <path> [--song-id <id>] [--tag <tag>] [--output-path <path>] [--text-output-path <path>]
+      evaluate-chart-corpus --corpus <path> --charts-dir <path> [--baseline-charts-dir <path>] [--song-id <id>] [--tag <tag>] [--output-path <path>] [--text-output-path <path>]
 
     Worker environment:
       PIPELINE_WORKER_POLL_INTERVAL_SECONDS    Seconds to wait between empty polls (default: 1)
@@ -1101,6 +1105,7 @@ public enum PipelineCLIParser {
             return .evaluateChartCorpus(
                 corpusPath: value(for: "--corpus", in: args) ?? "",
                 chartsDirectory: value(for: "--charts-dir", in: args) ?? "",
+                baselineChartsDirectory: value(for: "--baseline-charts-dir", in: args),
                 songID: value(for: "--song-id", in: args),
                 tag: value(for: "--tag", in: args),
                 outputPath: value(for: "--output-path", in: args),
@@ -1181,7 +1186,12 @@ public struct ChartCorpusFileSelection: Sendable {
 }
 
 public enum ChartCorpusEvaluatorHarness {
-    public static func evaluate(corpusURL: URL, chartsDirectoryURL: URL, selection: ChartCorpusFileSelection = .init()) throws -> ChartEvaluationCorpusPackagedReport {
+    public static func evaluate(
+        corpusURL: URL,
+        chartsDirectoryURL: URL,
+        baselineChartsDirectoryURL: URL? = nil,
+        selection: ChartCorpusFileSelection = .init()
+    ) throws -> ChartEvaluationCorpusPackagedReport {
         let corpusData = try Data(contentsOf: corpusURL)
         let decodedCorpus = try JSONDecoder.pipeline.decode(ChartEvaluationCorpus.self, from: corpusData)
         let filteredSongs = decodedCorpus.songs.filter { song in
@@ -1191,7 +1201,12 @@ public enum ChartCorpusEvaluatorHarness {
         }
         let corpus = ChartEvaluationCorpus(schemaVersion: decodedCorpus.schemaVersion, songs: filteredSongs)
         let generatedCharts = try loadCharts(from: chartsDirectoryURL)
-        return ChartEvaluationRunner.evaluate(corpus: corpus, generatedCharts: generatedCharts).packagedReport()
+        let baselineCharts = try baselineChartsDirectoryURL.map(loadCharts(from:)) ?? [:]
+        return ChartEvaluationRunner.evaluate(
+            corpus: corpus,
+            generatedCharts: generatedCharts,
+            baselineCharts: baselineCharts
+        ).packagedReport()
     }
 
     private static func loadCharts(from chartsDirectoryURL: URL) throws -> [String: [String: BaseChartContract]] {
