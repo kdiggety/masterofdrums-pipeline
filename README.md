@@ -93,18 +93,47 @@ Large files should not be stored in SQLite unless there is a specific reason. Pr
 
 ## Final Chart Output
 
-The user-facing chart deliverables live outside the run/artifact tree by default:
+The user-facing deliverable is the **final chart file**.
+It is intentionally separate from the run/debug artifact tree.
 
-- `./charts/<audio-name>--<timestamp>--<workflow>.modchart.json`
+Default location:
+
+- `./charts/`
+
+Default filename shape:
+
+- `<audio-name>--<timestamp>--<workflow>.modchart.json`
 
 Examples:
 
 - `charts/Lecrazy--2026-04-08T10-25-37--f5fdae.modchart.json`
+- `charts/My-Song--2026-04-08T17-40-03--464fbe.modchart.json`
 
-Use `PIPELINE_FINAL_CHART_DIR` to write final charts somewhere else entirely.
-The worker/CLI will print the final chart path explicitly when chart generation succeeds.
+Rules:
 
-The `runs/` / artifact directories remain debugging/provenance internals.
+- the filename mirrors the source audio basename
+- a timestamp is included for sorting and collision resistance
+- a short workflow identifier is included for uniqueness/provenance
+- final charts are **not** nested under `runs/<run-id>/...`
+
+Override the destination entirely with:
+
+- `PIPELINE_FINAL_CHART_DIR=/some/other/path`
+
+When chart generation succeeds, the worker/CLI prints the exact path explicitly:
+
+- `[pipeline] final chart file: /full/path/to/charts/<audio-name>--<timestamp>--<workflow>.modchart.json`
+
+Operational guidance:
+
+- **Use the printed final chart path when importing into the app**
+- Treat `runs/` and the artifact directories as debugging/provenance internals
+- `normalized-analysis` and other intermediate JSON outputs are not the app-facing chart deliverable
+
+In short:
+
+- `charts/` = user-facing deliverables
+- `runs/` = internal workflow/debugging
 
 ## CLI-First MVP
 
