@@ -592,10 +592,12 @@ public struct PipelineRuntime {
 
         let normalizedOutputURL = try prepareArtifactOutputURL(category: "normalized-analysis", workflowID: job.workflowID, jobID: job.id, createdAt: now)
         let baseChartOutputURL = try prepareArtifactOutputURL(category: "base-chart", workflowID: job.workflowID, jobID: job.id, createdAt: now)
+        let finalChartOutputURL = try prepareFinalChartOutputURL(sourceURI: payload.sourceURI, workflowID: job.workflowID, createdAt: now)
 
         let generated = ChartGenerator.generate(from: audioAnalysis, generatedAt: now, normalizedAnalysisArtifactURI: normalizedOutputURL.absoluteString)
         try generated.normalized.write(to: normalizedOutputURL)
         try generated.baseChart.write(to: baseChartOutputURL)
+        try generated.baseChart.write(to: finalChartOutputURL)
 
         try await artifacts.insert(
             ArtifactRecord(
@@ -617,6 +619,18 @@ public struct PipelineRuntime {
                 uri: baseChartOutputURL.absoluteString,
                 contentType: "application/json",
                 checksum: try Self.sha256Hex(for: baseChartOutputURL),
+                metadataJSON: Self.baseChartMetadataJSON(from: generated.baseChart),
+                createdAt: now
+            )
+        )
+        try await artifacts.insert(
+            ArtifactRecord(
+                workflowID: job.workflowID,
+                jobID: job.id,
+                artifactType: "final_chart",
+                uri: finalChartOutputURL.absoluteString,
+                contentType: "application/json",
+                checksum: try Self.sha256Hex(for: finalChartOutputURL),
                 metadataJSON: Self.baseChartMetadataJSON(from: generated.baseChart),
                 createdAt: now
             )
@@ -648,6 +662,19 @@ public struct PipelineRuntime {
             ],
             createdAt: now
         )
+        try await appendEvent(
+            workflowID: job.workflowID,
+            jobID: job.id,
+            eventType: "final_chart_created",
+            message: "Final chart file written",
+            details: [
+                "final_chart_uri": AnySendable(finalChartOutputURL.absoluteString),
+                "final_chart_path": AnySendable(finalChartOutputURL.path),
+                "note_count": AnySendable(generated.baseChart.chart.notes.count)
+            ],
+            createdAt: now
+        )
+        fputs("[pipeline] final chart file: \(finalChartOutputURL.path)\n", stderr)
         return generated.baseChart.toJSONString()
     }
 
@@ -739,6 +766,20 @@ public struct PipelineRuntime {
         try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
         let stamp = Self.filenameTimestamp(createdAt)
         return directoryURL.appendingPathComponent("\(stamp)-\(jobID).json")
+    }
+
+    private func prepareFinalChartOutputURL(sourceURI: String, workflowID: String, createdAt: Date) throws -> URL {
+        let rootURL = URL(fileURLWithPath: database.configuration.finalChartRoot, isDirectory: true)
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+
+        let sourceURL = (sourceURI.hasPrefix("file://") && URL(string: sourceURI)?.isFileURL == true)
+            ? URL(string: sourceURI)!
+            : URL(fileURLWithPath: sourceURI)
+        let baseName = Self.sanitizedChartBaseName(sourceURL.deletingPathExtension().lastPathComponent)
+        let stamp = Self.filenameTimestamp(createdAt)
+        let shortWorkflowID = String(workflowID.prefix(6)).lowercased()
+        let filename = "\(baseName)--\(stamp)--\(shortWorkflowID).modchart.json"
+        return rootURL.appendingPathComponent(filename)
     }
 
     private func runAudioAnalyzer(
@@ -996,6 +1037,15 @@ public struct PipelineRuntime {
         artifactFilenameFormatter.string(from: date)
     }
 
+    private static func sanitizedChartBaseName(_ rawValue: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
+        let scalars = rawValue.unicodeScalars.map { allowed.contains($0) ? Character($0) : "-" }
+        let collapsed = String(scalars)
+            .replacingOccurrences(of: "-+", with: "-", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-_"))
+        return collapsed.isEmpty ? "chart" : collapsed
+    }
+
     private static func timestamp(_ date: Date) -> String {
         workerTimestampFormatter.string(from: date)
     }
@@ -1046,7 +1096,8 @@ public struct PipelineRuntime {
 
     Worker environment:
       PIPELINE_WORKER_POLL_INTERVAL_SECONDS    Seconds to wait between empty polls (default: 1)
-      PIPELINE_ARTIFACT_ROOT                   Root directory for persisted analysis artifacts
+      PIPELINE_ARTIFACT_ROOT                   Root directory for persisted analysis/debug artifacts
+      PIPELINE_FINAL_CHART_DIR                 Output directory for final app-import chart files (default: ./charts)
       PIPELINE_AUDIO_ANALYZER_COMMAND          Shell command template with {input} and {output} placeholders
       PIPELINE_AUDIO_ANALYZER_TIMEOUT_SECONDS  Optional analyzer timeout in seconds
       PIPELINE_AUDIO_ANALYZER_STDOUT_JSON      Accept analyzer JSON from stdout when {output} is not written (default: false)

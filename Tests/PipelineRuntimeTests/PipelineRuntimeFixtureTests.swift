@@ -50,7 +50,7 @@ final class PipelineRuntimeFixtureTests: XCTestCase {
         XCTAssertEqual(analyzeJob.workflowID, chartGenerateJob.workflowID)
 
         let artifacts = try await runtime.artifacts.list(workflowID: ingestJob.workflowID, jobID: nil, limit: 10)
-        XCTAssertEqual(Set(artifacts.map(\.artifactType)), ["source_audio", "audio_analysis", "normalized_analysis", "base_chart"])
+        XCTAssertEqual(Set(artifacts.map(\.artifactType)), ["source_audio", "audio_analysis", "normalized_analysis", "base_chart", "final_chart"])
 
         let sourceArtifact = try XCTUnwrap(artifacts.first(where: { $0.artifactType == "source_audio" }))
         XCTAssertEqual(sourceArtifact.uri, fixtureURL.absoluteString)
@@ -118,6 +118,14 @@ final class PipelineRuntimeFixtureTests: XCTestCase {
         XCTAssertTrue(persistedBaseChart.chart.lanes.contains(.kick))
         XCTAssertTrue(persistedBaseChart.chart.lanes.contains(.snare))
         XCTAssertEqual(persistedBaseChart.chart.notes.count, 2)
+
+        let finalChartArtifact = try XCTUnwrap(artifacts.first(where: { $0.artifactType == "final_chart" }))
+        let finalChartArtifactURL = try XCTUnwrap(URL(string: finalChartArtifact.uri))
+        XCTAssertTrue(finalChartArtifactURL.path.contains("/charts/"))
+        XCTAssertTrue(finalChartArtifactURL.lastPathComponent.hasPrefix("known-tone--"))
+        XCTAssertTrue(finalChartArtifactURL.lastPathComponent.hasSuffix(".modchart.json"))
+        let persistedFinalChart = try decode(BaseChartContract.self, from: String(decoding: Data(contentsOf: finalChartArtifactURL), as: UTF8.self))
+        XCTAssertEqual(persistedFinalChart.chart.notes.count, 2)
     }
 
     func testGeneratedFixtureChartCanBeEvaluatedThroughCorpusRunner() async throws {
@@ -519,10 +527,13 @@ output_path.write_text(json.dumps(payload), encoding="utf-8")
     }
 
     private func makeRuntime(databasePath: String, artifactRoot: String, analyzerCommand: String, acceptsStdoutJSON: Bool = false) -> PipelineRuntime {
-        PipelineRuntime(
+        let artifactRootURL = URL(fileURLWithPath: artifactRoot, isDirectory: true)
+        let chartsRoot = artifactRootURL.deletingLastPathComponent().appendingPathComponent("charts", isDirectory: true).path
+        return PipelineRuntime(
             configuration: SQLiteConfiguration(
                 databasePath: databasePath,
                 artifactRoot: artifactRoot,
+                finalChartRoot: chartsRoot,
                 autoMigrate: true
             ),
             audioAnalyzerConfiguration: AudioAnalyzerConfiguration(

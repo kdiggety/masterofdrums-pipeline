@@ -4,11 +4,13 @@ import SQLite3
 public struct SQLiteConfiguration: Sendable {
     public let databasePath: String
     public let artifactRoot: String
+    public let finalChartRoot: String
     public let autoMigrate: Bool
 
-    public init(databasePath: String, artifactRoot: String = "./var/artifacts", autoMigrate: Bool = true) {
+    public init(databasePath: String, artifactRoot: String = "./var/artifacts", finalChartRoot: String = "./charts", autoMigrate: Bool = true) {
         self.databasePath = databasePath
         self.artifactRoot = artifactRoot
+        self.finalChartRoot = finalChartRoot
         self.autoMigrate = autoMigrate
     }
 
@@ -16,6 +18,7 @@ public struct SQLiteConfiguration: Sendable {
         SQLiteConfiguration(
             databasePath: environment["PIPELINE_DATABASE_PATH"] ?? "./var/masterofdrums-pipeline.sqlite",
             artifactRoot: environment["PIPELINE_ARTIFACT_ROOT"] ?? "./var/artifacts",
+            finalChartRoot: environment["PIPELINE_FINAL_CHART_DIR"] ?? "./charts",
             autoMigrate: (environment["PIPELINE_AUTO_MIGRATE"] ?? "true").lowercased() == "true"
         )
     }

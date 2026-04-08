@@ -91,6 +91,21 @@ Primary state expected in the database:
 
 Large files should not be stored in SQLite unless there is a specific reason. Prefer storing file/object references plus metadata.
 
+## Final Chart Output
+
+The user-facing chart deliverables live outside the run/artifact tree by default:
+
+- `./charts/<audio-name>--<timestamp>--<workflow>.modchart.json`
+
+Examples:
+
+- `charts/Lecrazy--2026-04-08T10-25-37--f5fdae.modchart.json`
+
+Use `PIPELINE_FINAL_CHART_DIR` to write final charts somewhere else entirely.
+The worker/CLI will print the final chart path explicitly when chart generation succeeds.
+
+The `runs/` / artifact directories remain debugging/provenance internals.
+
 ## CLI-First MVP
 
 The command line is the first operational surface.
