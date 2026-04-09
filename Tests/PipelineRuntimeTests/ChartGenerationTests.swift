@@ -80,6 +80,34 @@ final class ChartGenerationTests: XCTestCase {
         XCTAssertEqual(generated.baseChart.chart.notes.map(\.subdivisionIndex), [1, 5])
     }
 
+    func testGenerateRepairsSparseFirstBarUsingDownbeatCadence() throws {
+        let analysis = makeAnalysis(raw: [
+            "beats": [0.02, 1.0, 2.0, 2.5, 3.0, 3.5, 4.0],
+            "downbeats": [0.02, 2.0, 4.0],
+            "drumEvents": [
+                ["eventID": "kick-1", "label": "kick", "onsetSeconds": 0.03, "velocity": 1.0],
+                ["eventID": "snare-1", "label": "snare", "onsetSeconds": 1.02, "velocity": 0.8],
+                ["eventID": "kick-2", "label": "kick", "onsetSeconds": 2.02, "velocity": 1.0]
+            ]
+        ], duration: 4.0)
+
+        let generated = ChartGenerator.generate(
+            from: analysis,
+            generatedAt: Date(timeIntervalSince1970: 0),
+            normalizedAnalysisArtifactURI: "file:///tmp/normalized.json"
+        )
+
+        XCTAssertEqual(generated.baseChart.timing.offsetSeconds, 0, accuracy: 0.0001)
+        XCTAssertEqual(generated.normalized.summary.downbeatOffsetSeconds, 0, accuracy: 0.0001)
+        XCTAssertEqual(generated.normalized.summary.beatCount, 8)
+        let beatStarts = generated.normalized.beatGrid.filter { $0.subdivisionInBeat == 0 }.map(\.startSeconds)
+        XCTAssertEqual(beatStarts.count, 8)
+        for (actual, expected) in zip(beatStarts, [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5]) {
+            XCTAssertEqual(actual, expected, accuracy: 0.0001)
+        }
+        XCTAssertEqual(generated.baseChart.chart.notes.map(\.tick), [0, 960])
+    }
+
     func testGenerateWarnsWhenCandidatesAreDroppedAndMapsLaneAliases() throws {
         let analysis = makeAnalysis(raw: [
             "beats": [0.0, 0.5],

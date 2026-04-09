@@ -28,6 +28,9 @@ enum ChartGenerator {
         let sourceProvenance = makeSourceProvenance(from: analysis, drumEventResult: drumEventResult, usedAnalyzerTiming: usedAnalyzerTiming)
         let operatorSummary = makeOperatorSummary(drumEvents: drumEventResult.events, sourceProvenance: sourceProvenance, warnings: warnings)
 
+        let normalizedTimingOffsetSeconds = beatGrid.first(where: { $0.beatIndex == 0 && $0.subdivisionInBeat == 0 })?.startSeconds
+            ?? analysis.analysis.downbeatOffsetSeconds
+
         let normalized = NormalizedAnalysisContract(
             source: NormalizedAnalysisSource(
                 sourceType: analysis.source.sourceType,
@@ -39,7 +42,7 @@ enum ChartGenerator {
                 normalizedAt: generatedAt,
                 durationSeconds: analysis.analysis.durationSeconds,
                 estimatedTempoBPM: analysis.analysis.estimatedTempoBPM,
-                downbeatOffsetSeconds: analysis.analysis.downbeatOffsetSeconds,
+                downbeatOffsetSeconds: normalizedTimingOffsetSeconds,
                 beatCount: Set(beatGrid.map(\.beatIndex)).count,
                 barCount: measures.count,
                 drumEventCount: drumEventResult.events.count,
@@ -61,7 +64,9 @@ enum ChartGenerator {
 
         let notes = makeChartNotes(from: normalized.drumEvents, ticksPerBeat: ticksPerBeat, beatGrid: beatGrid)
         let lanes = Array(Set(notes.map { $0.lane })).sorted { $0.rawValue < $1.rawValue }
-        let timingOffsetSeconds = analysis.analysis.downbeatOffsetSeconds ?? 0
+        let timingOffsetSeconds = beatGrid.first(where: { $0.beatIndex == 0 && $0.subdivisionInBeat == 0 })?.startSeconds
+            ?? analysis.analysis.downbeatOffsetSeconds
+            ?? 0
         let baseChart = BaseChartContract(
             source: BaseChartSource(
                 normalizedAnalysisArtifactURI: normalizedAnalysisArtifactURI,
@@ -215,15 +220,25 @@ enum ChartGenerator {
 
     private static func makeBeatGrid(from analysis: AudioAnalysisContract, timeSignature: TimeSignature) -> [BeatGridEvent] {
         if let beatStarts = extractBeatStarts(from: analysis.rawAnalyzerOutput), !beatStarts.isEmpty {
-            let sortedBeatStarts = beatStarts.sorted()
             let analyzerCandidates = extractRawDrumEventCandidates(from: analysis.rawAnalyzerOutput)
+            let normalizedDownbeatStarts = normalizeLoopDownbeats(
+                extractDownbeatStarts(from: analysis.rawAnalyzerOutput) ?? [],
+                tempoBPM: analysis.analysis.estimatedTempoBPM,
+                timeSignature: timeSignature
+            )
+            let repairedBeatStarts = normalizeLoopBeatStarts(
+                beatStarts,
+                downbeatStarts: normalizedDownbeatStarts,
+                tempoBPM: analysis.analysis.estimatedTempoBPM,
+                timeSignature: timeSignature
+            )
             let subdivisionsPerBeat = inferredAnalyzerSubdivisions(from: analysis.rawAnalyzerOutput)
-                ?? inferredSubdivisionsFromAnalyzerEvents(beatStarts: sortedBeatStarts, candidates: analyzerCandidates)
+                ?? inferredSubdivisionsFromAnalyzerEvents(beatStarts: repairedBeatStarts, candidates: analyzerCandidates)
                 ?? fallbackSubdivisionsPerBeat
             return beatGridFromBeatStarts(
-                sortedBeatStarts,
+                repairedBeatStarts,
                 subdivisionStarts: extractSubdivisionStarts(from: analysis.rawAnalyzerOutput) ?? [],
-                downbeatStarts: extractDownbeatStarts(from: analysis.rawAnalyzerOutput) ?? [],
+                downbeatStarts: normalizedDownbeatStarts,
                 tempoBPM: analysis.analysis.estimatedTempoBPM,
                 confidence: analysis.analysis.confidence,
                 timeSignature: timeSignature,
@@ -1258,6 +1273,74 @@ enum ChartGenerator {
             deduped.append(value)
         }
         return deduped
+    }
+
+    private static func normalizeLoopDownbeats(_ downbeatStarts: [Double], tempoBPM: Double?, timeSignature: TimeSignature) -> [Double] {
+        let normalized = normalizeStarts(downbeatStarts)
+        guard let first = normalized.first,
+              first > 0,
+              shouldSnapLeadingLoopOffset(firstDownbeatOffset: first, downbeatStarts: normalized, tempoBPM: tempoBPM, timeSignature: timeSignature) else {
+            return normalized
+        }
+        return normalizeStarts(normalized.map { max($0 - first, 0) })
+    }
+
+    private static func normalizeLoopBeatStarts(_ beatStarts: [Double], downbeatStarts: [Double], tempoBPM: Double?, timeSignature: TimeSignature) -> [Double] {
+        let normalizedBeats = normalizeStarts(beatStarts)
+        guard !normalizedBeats.isEmpty else { return [] }
+
+        let firstBeat = normalizedBeats.first ?? 0
+        let snappedBeats: [Double]
+        if firstBeat > 0,
+           shouldSnapLeadingLoopOffset(firstDownbeatOffset: firstBeat, downbeatStarts: downbeatStarts, tempoBPM: tempoBPM, timeSignature: timeSignature) {
+            snappedBeats = normalizeStarts(normalizedBeats.map { max($0 - firstBeat, 0) })
+        } else {
+            snappedBeats = normalizedBeats
+        }
+
+        guard downbeatStarts.count >= 2 else { return snappedBeats }
+
+        var repaired: [Double] = []
+        let tolerance = 0.0005
+        for (index, start) in downbeatStarts.enumerated() {
+            let end = index + 1 < downbeatStarts.count ? downbeatStarts[index + 1] : nil
+            guard let end, end > start + tolerance else {
+                repaired.append(contentsOf: snappedBeats.filter { $0 >= start - tolerance })
+                break
+            }
+
+            let barBeats = snappedBeats.filter { $0 >= start - tolerance && $0 < end - tolerance }
+            if barBeats.count == timeSignature.numerator {
+                repaired.append(contentsOf: barBeats)
+                continue
+            }
+
+            let beatDuration = (end - start) / Double(timeSignature.numerator)
+            guard beatDuration > 0.0001 else {
+                repaired.append(contentsOf: barBeats)
+                continue
+            }
+
+            let synthesized = (0..<timeSignature.numerator).map { start + Double($0) * beatDuration }
+            repaired.append(contentsOf: synthesized)
+        }
+
+        return normalizeStarts(repaired)
+    }
+
+    private static func shouldSnapLeadingLoopOffset(firstDownbeatOffset: Double, downbeatStarts: [Double], tempoBPM: Double?, timeSignature: TimeSignature) -> Bool {
+        guard firstDownbeatOffset > 0, firstDownbeatOffset <= 0.03 else { return false }
+        let completeBarDurations = zip(downbeatStarts, downbeatStarts.dropFirst()).map { $1 - $0 }.filter { $0 > 0.0001 }
+        let referenceBeatDurationFromTempo = tempoBPM.map { 60.0 / max($0, 1) }
+        let referenceBeatDurationFromBars = completeBarDurations.isEmpty
+            ? nil
+            : (completeBarDurations.reduce(0, +) / Double(completeBarDurations.count)) / Double(timeSignature.numerator)
+        guard let referenceBeatDuration = referenceBeatDurationFromBars ?? referenceBeatDurationFromTempo,
+              referenceBeatDuration > 0 else {
+            return false
+        }
+        let maxAllowedOffset = min(referenceBeatDuration * 0.08, 0.03)
+        return firstDownbeatOffset <= maxAllowedOffset
     }
 
     private static func matchesKnownDownbeat(startSeconds: Double, downbeatStarts: [Double]) -> Bool {
