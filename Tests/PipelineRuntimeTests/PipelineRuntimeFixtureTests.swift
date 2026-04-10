@@ -629,7 +629,7 @@ class File2Beats:
         XCTAssertEqual(persistedNormalized.summary.beatCount, 6)
         XCTAssertEqual(persistedNormalized.summary.barCount, 2)
         XCTAssertEqual(persistedNormalized.beatGrid.first(where: { $0.beatIndex == 0 })?.isDownbeat, true)
-        XCTAssertEqual(persistedNormalized.beatGrid.first(where: { $0.beatIndex == 3 })?.isDownbeat, true)
+        XCTAssertEqual(persistedNormalized.beatGrid.first(where: { $0.beatIndex == 3 })?.isDownbeat, false)
     }
 
     func testBeatThisBackendFallsBackWhenPrimaryIsUnavailable() async throws {

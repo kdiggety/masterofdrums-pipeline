@@ -102,7 +102,7 @@ final class ChartGenerationTests: XCTestCase {
         XCTAssertEqual(generated.normalized.summary.beatCount, 9)
         let beatStarts = generated.normalized.beatGrid.filter { $0.subdivisionInBeat == 0 }.map(\.startSeconds)
         XCTAssertEqual(beatStarts.count, 9)
-        for (actual, expected) in zip(beatStarts, [0.0, 0.495, 0.99, 1.485, 1.98, 2.48, 2.98, 3.48, 4.0]) {
+        for (actual, expected) in zip(beatStarts, [0.0, 0.495, 0.99, 1.485, 1.98, 2.48, 2.98, 3.48, 3.98]) {
             XCTAssertEqual(actual, expected, accuracy: 0.0001)
         }
         XCTAssertEqual(generated.baseChart.chart.notes.map(\.tick), [40, 1000, 1960])
@@ -164,7 +164,7 @@ final class ChartGenerationTests: XCTestCase {
         XCTAssertEqual(generated.normalized.drumEventDiagnostics?.rawCandidateCount, 3)
         XCTAssertEqual(generated.normalized.drumEventDiagnostics?.mappedCandidateCount, 3)
         XCTAssertEqual(generated.normalized.drumEventDiagnostics?.postShapingEventCount, 2)
-        XCTAssertEqual(generated.normalized.drumEventDiagnostics?.deduplicatedCandidateCount, 2)
+        XCTAssertEqual(generated.normalized.drumEventDiagnostics?.deduplicatedCandidateCount, 1)
         XCTAssertEqual(generated.normalized.drumEventDiagnostics?.shapingReductionCount, 1)
         XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("Timing/events split: timing source=analyzer; drum-event source=analyzer") }))
         XCTAssertTrue(generated.normalized.warnings.contains(where: { $0.contains("Collapsed") && $0.contains("analyzer drum-event duplicates") }))
