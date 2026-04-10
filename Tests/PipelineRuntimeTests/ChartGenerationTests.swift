@@ -98,7 +98,7 @@ final class ChartGenerationTests: XCTestCase {
         )
 
         XCTAssertEqual(generated.baseChart.timing.offsetSeconds, 0, accuracy: 0.0001)
-        XCTAssertEqual(generated.normalized.summary.downbeatOffsetSeconds, 0, accuracy: 0.0001)
+        XCTAssertEqual(generated.normalized.summary.downbeatOffsetSeconds ?? 0, 0, accuracy: 0.0001)
         XCTAssertEqual(generated.normalized.summary.beatCount, 8)
         let beatStarts = generated.normalized.beatGrid.filter { $0.subdivisionInBeat == 0 }.map(\.startSeconds)
         XCTAssertEqual(beatStarts.count, 8)
