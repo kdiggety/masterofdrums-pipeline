@@ -227,10 +227,11 @@ export PIPELINE_ANALYZER_VALIDATION_MODE=require-timing
 
 # optional later-path seam: keep beat/downbeat timing from one backend,
 # then merge stage-2 drum-event candidates from another backend/adapter.
-# Example event sidecar command could be an ADTOF wrapper that writes loose drumEvents JSON.
+# ADTOF is the preferred next stage-2 backend for lane/event candidates.
 # export PIPELINE_AUDIO_ANALYZER_COMMAND="./.venv/bin/python ./scripts/hybrid-drum-events-backend.py --input {input} --output {output}"
 # export PIPELINE_ANALYZER_TIMING_BACKEND_COMMAND="./.venv/bin/python ./scripts/beat-this-backend.py --input {input} --output {output}"
-# export PIPELINE_ANALYZER_EVENT_BACKEND_COMMAND="./.venv/bin/python ./scripts/adtof-output-adapter.py --input-json ./scripts/fixtures/adtof-sample-events.json --output {output}"
+# export PIPELINE_ANALYZER_EVENT_BACKEND_COMMAND="./.venv/bin/python ./scripts/adtof-stage2-backend.py --input {input} --output {output} --input-json ./scripts/fixtures/adtof-sample-events.json"
+# export PIPELINE_ADTOF_BACKEND_COMMAND="python3 /opt/adtof/infer.py --input {input} --output {output}"
 # export PIPELINE_ANALYZER_EVENT_POLICY=optional
 
 # optional madmom-style fallback spike instead of the heuristic backend
@@ -243,6 +244,7 @@ export PIPELINE_AUDIO_ANALYZER_STDOUT_JSON=false
 swift run MasterOfDrumsPipeline doctor-audio-analyzer
 swift run MasterOfDrumsPipeline validate-audio-analyzer --source-uri file:///tmp/test.wav --source-type file --requested-by cli
 python3 ./scripts/test-analyzer-wrapper.py
+python3 ./scripts/test-adtof-stage2-backend.py
 python3 ./scripts/test-compare-timing-paths.py
 python3 ./scripts/test-chart-summary.py
 
