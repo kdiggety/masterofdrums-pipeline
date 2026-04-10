@@ -8,7 +8,7 @@ struct ChartGenerationOutput {
 
 enum ChartGenerator {
     private static let fallbackSubdivisionsPerBeat = 4
-    private static let supportedSubdivisionCandidates = [3, 4, 6, 8]
+    private static let supportedSubdivisionCandidates = [3, 4, 6, 8, 12]
     private static let maxClosedHihatPulsePerBeat = 1
     private static let maxHiHatTexturePerBeat = 1
     private static let sparseHatPulseBeatsInBar: Set<Int> = [0]
@@ -298,7 +298,7 @@ enum ChartGenerator {
         subdivisionsPerBeat: Int
     ) -> [BeatGridEvent] {
         guard !beatStarts.isEmpty else { return [] }
-        let usableSubdivisions = max(1, min(subdivisionsPerBeat, 8))
+        let usableSubdivisions = max(1, min(subdivisionsPerBeat, 12))
         let estimatedFinalBeatDuration = estimateFinalBeatDuration(from: beatStarts, tempoBPM: tempoBPM)
         let normalizedDownbeats = normalizeStarts(downbeatStarts)
         let normalizedSubdivisionStarts = normalizeStarts(subdivisionStarts)
@@ -547,11 +547,11 @@ enum ChartGenerator {
                 .filter { !backboneFamilyLanes.contains($0.lane) && !accentLanes.contains($0.lane) && !hihatFamilyLanes.contains($0.lane) }
                 .sorted(by: eventPreferenceSort)
 
-            let selectedBackbone = preferredBackbone(from: backboneEvents, context: context)
-            let selectedAccent = preferredAccent(from: accentEvents, context: context, backbone: selectedBackbone)
-            let keptHihats = selectHiHats(from: hihats, context: context, backbone: selectedBackbone, accent: selectedAccent)
+            let selectedBackbone = preferredBackboneEvents(from: backboneEvents, context: context)
+            let selectedAccent = preferredAccent(from: accentEvents, context: context, backbone: selectedBackbone.first)
+            let keptHihats = selectHiHats(from: hihats, context: context, backbone: selectedBackbone.first, accent: selectedAccent)
 
-            return ([selectedBackbone, selectedAccent].compactMap { $0 } + keptHihats + supportingLanes).sorted(by: eventPreferenceSort)
+            return (selectedBackbone + [selectedAccent].compactMap { $0 } + keptHihats + supportingLanes).sorted(by: eventPreferenceSort)
         }
     }
 
@@ -616,25 +616,34 @@ enum ChartGenerator {
         }
     }
 
-    private static func preferredBackbone(from backboneEvents: [DetectedDrumEvent], context: BeatShapingContext) -> DetectedDrumEvent? {
-        guard let prioritized = backboneEvents.first else { return nil }
-        guard backboneEvents.count > 1 else { return prioritized }
+    private static func preferredBackboneEvents(from backboneEvents: [DetectedDrumEvent], context: BeatShapingContext) -> [DetectedDrumEvent] {
+        guard !backboneEvents.isEmpty else { return [] }
 
-        let strongest = backboneEvents.max { lhs, rhs in
-            eventStrength(lhs) < eventStrength(rhs)
-        } ?? prioritized
+        let groupedBySubdivision = Dictionary(grouping: backboneEvents) { $0.onsetSubdivisionIndex ?? Int.min }
+        let orderedSubdivisionKeys = groupedBySubdivision.keys.sorted()
 
-        let prioritizedStrength = eventStrength(prioritized)
-        let strongestStrength = eventStrength(strongest)
-        if strongest.eventID != prioritized.eventID,
-           strongestStrength - prioritizedStrength >= backboneConfidenceOverrideThreshold {
-            return strongest
+        return orderedSubdivisionKeys.compactMap { subdivisionKey in
+            guard let subdivisionEvents = groupedBySubdivision[subdivisionKey], let prioritized = subdivisionEvents.first else {
+                return nil
+            }
+            guard subdivisionEvents.count > 1 else { return prioritized }
+
+            let strongest = subdivisionEvents.max { lhs, rhs in
+                eventStrength(lhs) < eventStrength(rhs)
+            } ?? prioritized
+
+            let prioritizedStrength = eventStrength(prioritized)
+            let strongestStrength = eventStrength(strongest)
+            if strongest.eventID != prioritized.eventID,
+               strongestStrength - prioritizedStrength >= backboneConfidenceOverrideThreshold {
+                return strongest
+            }
+
+            let samePriorityAlternatives = subdivisionEvents.filter {
+                backbonePriority($0, context: context) == backbonePriority(prioritized, context: context)
+            }
+            return samePriorityAlternatives.sorted(by: eventPreferenceSort).first ?? prioritized
         }
-
-        let samePriorityAlternatives = backboneEvents.filter {
-            backbonePriority($0, context: context) == backbonePriority(prioritized, context: context)
-        }
-        return samePriorityAlternatives.sorted(by: eventPreferenceSort).first ?? prioritized
     }
 
     private static func preferredAccent(from accents: [DetectedDrumEvent], context: BeatShapingContext, backbone: DetectedDrumEvent?) -> DetectedDrumEvent? {
@@ -1029,7 +1038,7 @@ enum ChartGenerator {
                     ?? root["timing"]?.dictionary?["subdivisions_per_beat"]
             )
             if let explicit {
-                return max(1, min(explicit, 8))
+                return max(1, min(explicit, 12))
             }
         }
         return nil
