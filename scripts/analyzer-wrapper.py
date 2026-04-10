@@ -263,6 +263,66 @@ def payload_has_timing(payload: dict[str, Any]) -> bool:
     return False
 
 
+def extract_drum_events(payload: dict[str, Any]) -> list[Any]:
+    for key in ("drumEvents", "drum_events", "events", "hits", "notes", "candidates", "predictions", "detections"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return value
+
+    for container_key in ("result", "output", "payload", "data", "response", "prediction", "transcription", "drums", "percussion", "timing"):
+        nested = payload.get(container_key)
+        if isinstance(nested, dict):
+            found = extract_drum_events(nested)
+            if found:
+                return found
+
+    return []
+
+
+def payload_has_drum_events(payload: dict[str, Any]) -> bool:
+    return bool(extract_drum_events(payload))
+
+
+def merge_stage2_drum_events(*, timing_payload: dict[str, Any], event_payload: dict[str, Any], primary_command: str, fallback_command: str) -> dict[str, Any]:
+    merged = dict(timing_payload)
+    drum_events = extract_drum_events(event_payload)
+    if not drum_events:
+        return merged
+
+    merged["drumEvents"] = drum_events
+
+    runtime = merged.setdefault("runtime", {})
+    if not isinstance(runtime, dict):
+        runtime = {}
+        merged["runtime"] = runtime
+    runtime["selectedBackend"] = "primary+fallback-events"
+    runtime["backendCommand"] = primary_command
+    runtime["fallbackBackendCommand"] = fallback_command
+    runtime["eventBackendCommand"] = fallback_command
+    runtime["eventBackendUsed"] = True
+    runtime["eventBackendCandidateCount"] = len(drum_events)
+
+    if isinstance(event_payload.get("runtime"), dict):
+        runtime["eventBackendRuntime"] = event_payload["runtime"]
+
+    note = merged.get("note")
+    event_note = event_payload.get("note")
+    note_parts = [str(note).strip()] if note else []
+    note_parts.append("Analyzer wrapper merged fallback drum-event candidates onto the primary timing backbone.")
+    if event_note:
+        note_parts.append(f"stage2={str(event_note).strip()}")
+    merged["note"] = " ".join(part for part in note_parts if part)
+
+    append_warning(merged, f"analyzer wrapper merged {len(drum_events)} fallback drum-event candidates onto primary timing output")
+    event_warnings = event_payload.get("warnings")
+    if isinstance(event_warnings, list):
+        for warning in event_warnings:
+            if isinstance(warning, str):
+                append_warning(merged, f"event-backend: {warning}")
+
+    return merged
+
+
 def validate_backend_payload(payload: dict[str, Any], validation_mode: str) -> list[str]:
     issues: list[str] = []
     if validation_mode == "none":
@@ -434,6 +494,29 @@ def run_primary_fallback_backends(*, input_path: str, output_path: str, primary_
         primary_command=primary_command,
         fallback_command=fallback_command,
     )
+
+    should_attempt_event_merge = (
+        fallback_command is not None
+        and fallback_policy in {"on-invalid", "on-error-or-invalid", "always"}
+        and payload_has_timing(payload)
+        and not payload_has_drum_events(payload)
+    )
+    if should_attempt_event_merge:
+        try:
+            fallback_payload = run_backend_command(fallback_command, input_path=input_path, output_path=output_path, allow_stdout_json=allow_stdout_json)
+            fallback_events = extract_drum_events(fallback_payload)
+            if fallback_events:
+                payload = merge_stage2_drum_events(
+                    timing_payload=payload,
+                    event_payload=fallback_payload,
+                    primary_command=primary_command,
+                    fallback_command=fallback_command,
+                )
+            else:
+                append_warning(payload, "analyzer wrapper kept timing-only primary output because fallback backend returned no usable drum-event candidates for stage-2 merge")
+        except RuntimeError as exc:
+            append_warning(payload, f"analyzer wrapper kept timing-only primary output after stage-2 fallback event merge failed: {exc}")
+
     append_warning(payload, "analyzer wrapper delegated to backend command")
     if issues:
         append_warning(payload, f"analyzer wrapper primary backend validation warning: {'; '.join(issues)}")

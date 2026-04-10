@@ -43,6 +43,20 @@ LEGACY_BACKEND = (
     "pathlib.Path(a.output).write_text(json.dumps({'analysis': {'audioTrackCount': 1, 'estimatedSegmentCount': 1, 'durationSeconds': 1.0, 'estimatedTempoBPM': 111.0, 'confidence': 0.9}, 'beats': [0.0, 0.54], 'warnings': ['legacy-backend']}) + '\\n', encoding='utf-8')"
 )
 
+PRIMARY_TIMING_ONLY = (
+    "import argparse, json, pathlib; "
+    "p=argparse.ArgumentParser(); p.add_argument('--input', required=True); p.add_argument('--output', required=True); "
+    "a=p.parse_args(); "
+    "pathlib.Path(a.output).write_text(json.dumps({'analysis': {'audioTrackCount': 1, 'estimatedSegmentCount': 1, 'durationSeconds': 1.0, 'estimatedTempoBPM': 140.0, 'confidence': 0.95}, 'beats': [0.0, 0.25, 0.5, 0.75, 1.0], 'downbeats': [0.0], 'warnings': ['primary-timing-only'], 'note': 'timing only', 'runtime': {'backend': 'fixture-primary'}}) + '\n', encoding='utf-8')"
+)
+
+FALLBACK_EVENTS = (
+    "import argparse, json, pathlib; "
+    "p=argparse.ArgumentParser(); p.add_argument('--input', required=True); p.add_argument('--output', required=True); "
+    "a=p.parse_args(); "
+    "pathlib.Path(a.output).write_text(json.dumps({'drumEvents': [{'eventID': 'kick-1', 'onsetSeconds': 0.0, 'label': 'kick', 'velocity': 0.92}, {'eventID': 'kick-2', 'onsetSeconds': 0.25, 'label': 'kick', 'velocity': 0.88}, {'eventID': 'snare-1', 'onsetSeconds': 0.5, 'label': 'snare', 'velocity': 0.84}], 'warnings': ['fallback-events'], 'note': 'event candidates ready', 'runtime': {'backend': 'fixture-event'}}) + '\n', encoding='utf-8')"
+)
+
 
 def backend_command(code: str) -> str:
     return f"{sys.executable} -c {code!r} --input {{input}} --output {{output}}"
@@ -117,8 +131,35 @@ def test_legacy_backend_command_still_works() -> None:
         assert "analyzer wrapper delegated to backend command" in payload.get("warnings", [])
 
 
+def test_primary_timing_backbone_merges_fallback_event_candidates() -> None:
+    with tempfile.TemporaryDirectory() as raw:
+        tempdir = pathlib.Path(raw)
+        payload = run_wrapper(
+            tempdir,
+            "--primary-backend-command",
+            backend_command(PRIMARY_TIMING_ONLY),
+            "--fallback-backend-command",
+            backend_command(FALLBACK_EVENTS),
+            "--fallback-policy",
+            "on-error-or-invalid",
+            "--validation-mode",
+            "require-timing",
+        )
+        runtime = payload.get("runtime", {})
+        assert runtime.get("selectedBackend") == "primary+fallback-events", runtime
+        assert runtime.get("fallbackUsed") is False, runtime
+        assert runtime.get("eventBackendUsed") is True, runtime
+        assert runtime.get("eventBackendCandidateCount") == 3, runtime
+        assert runtime.get("eventBackendRuntime", {}).get("backend") == "fixture-event", runtime
+        assert payload.get("beats") == [0.0, 0.25, 0.5, 0.75, 1.0], payload
+        assert len(payload.get("drumEvents", [])) == 3, payload
+        assert any("merged 3 fallback drum-event candidates" in warning for warning in payload.get("warnings", [])), payload
+        assert any("event-backend: fallback-events" == warning for warning in payload.get("warnings", [])), payload
+
+
 if __name__ == "__main__":
     test_primary_validation_falls_back()
     test_primary_failure_falls_back()
     test_legacy_backend_command_still_works()
+    test_primary_timing_backbone_merges_fallback_event_candidates()
     print("analyzer-wrapper smoke tests passed")
