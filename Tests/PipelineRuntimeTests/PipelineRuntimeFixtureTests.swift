@@ -626,10 +626,10 @@ class File2Beats:
         let normalizedArtifact = try XCTUnwrap(artifacts.first(where: { $0.artifactType == "normalized_analysis" }))
         let normalizedArtifactURL = try XCTUnwrap(URL(string: normalizedArtifact.uri))
         let persistedNormalized = try decode(NormalizedAnalysisContract.self, from: String(decoding: Data(contentsOf: normalizedArtifactURL), as: UTF8.self))
-        XCTAssertEqual(persistedNormalized.summary.beatCount, 4)
+        XCTAssertEqual(persistedNormalized.summary.beatCount, 6)
         XCTAssertEqual(persistedNormalized.summary.barCount, 2)
         XCTAssertEqual(persistedNormalized.beatGrid.first(where: { $0.beatIndex == 0 })?.isDownbeat, true)
-        XCTAssertEqual(persistedNormalized.beatGrid.first(where: { $0.beatIndex == 2 })?.isDownbeat, true)
+        XCTAssertEqual(persistedNormalized.beatGrid.first(where: { $0.beatIndex == 3 })?.isDownbeat, true)
     }
 
     func testBeatThisBackendFallsBackWhenPrimaryIsUnavailable() async throws {
