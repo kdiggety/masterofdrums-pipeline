@@ -57,6 +57,33 @@ def test_prefers_stronger_same_lane_hit_when_deduping() -> None:
     assert any("deduped" in warning for warning in warnings), warnings
 
 
+def test_preserves_fast_kick_doubles_when_spacing_is_intentional() -> None:
+    shaped, warnings = backend.shape_drum_events(
+        [
+            event(0.000, "kick", 0.82),
+            event(0.095, "kick", 0.79),
+            event(0.500, "snare", 0.84),
+        ],
+        beats=[0.0, 0.5, 1.0],
+    )
+    assert [item["lane"] for item in shaped] == ["kick", "kick", "snare"], shaped
+    assert not any("deduped" in warning for warning in warnings), warnings
+
+
+def test_keeps_dense_hihat_triplet_texture() -> None:
+    shaped, _ = backend.shape_drum_events(
+        [
+            event(0.000, "kick", 0.86),
+            event(0.160, "closed_hihat", 0.84),
+            event(0.245, "closed_hihat", 0.81),
+            event(0.330, "closed_hihat", 0.83),
+            event(0.500, "snare", 0.88),
+        ],
+        beats=[0.0, 0.5, 1.0],
+    )
+    assert [item["lane"] for item in shaped] == ["kick", "closed_hihat", "closed_hihat", "closed_hihat", "snare"], shaped
+
+
 def test_promotes_beat_anchored_hits_to_kick_when_no_kick_detected() -> None:
     shaped, warnings = backend.shape_drum_events(
         [
@@ -121,6 +148,8 @@ def test_classifies_sustained_bright_hit_as_open_hihat() -> None:
 
 if __name__ == "__main__":
     test_prefers_stronger_same_lane_hit_when_deduping()
+    test_preserves_fast_kick_doubles_when_spacing_is_intentional()
+    test_keeps_dense_hihat_triplet_texture()
     test_promotes_beat_anchored_hits_to_kick_when_no_kick_detected()
     test_filters_weak_isolated_hihat_texture_but_keeps_strong_upbeat()
     test_classifies_sustained_noisy_hit_as_crash()

@@ -32,15 +32,22 @@ from typing import Any
 TARGET_SAMPLE_RATE = 22_050
 FRAME_SIZE = 1_024
 HOP_SIZE = 512
-MIN_EVENT_GAP_SECONDS = 0.12
+MIN_EVENT_GAP_SECONDS = 0.07
 MAX_EVENT_GAP_SECONDS = 1.5
 DEFAULT_TEMPO_BPM = 120.0
 FFMPEG_DECODE_TIMEOUT_SECONDS = 20
 KICK_RECLASSIFY_LIMIT = 0.32
-SNARE_CONFIDENCE_FLOOR = 0.58
+SNARE_CONFIDENCE_FLOOR = 0.54
 HIHAT_CONFIDENCE_FLOOR = 0.62
 ISOLATED_HIHAT_CONFIDENCE_FLOOR = 0.78
-MIN_SAME_LANE_GAP_SECONDS = 0.18
+MIN_SAME_LANE_GAP_SECONDS = 0.14
+LANE_MIN_GAP_SECONDS = {
+    "kick": 0.075,
+    "snare": 0.10,
+    "closed_hihat": 0.055,
+    "open_hihat": 0.08,
+    "crash": 0.16,
+}
 BEAT_ANCHOR_WINDOW = 0.16
 UPBEAT_WINDOW = 0.12
 KICK_PROMOTION_CONFIDENCE_FLOOR = 0.7
@@ -351,6 +358,13 @@ def nearest_beat_context(onset: float, beats: list[float]) -> tuple[int | None, 
     return nearest_index, distance, beat_interval
 
 
+def effective_same_lane_gap(lane: str, beat_interval: float | None) -> float:
+    base_gap = LANE_MIN_GAP_SECONDS.get(lane, MIN_SAME_LANE_GAP_SECONDS)
+    if beat_interval is None or beat_interval <= 0:
+        return base_gap
+    return min(base_gap, max(beat_interval * 0.24, 0.045))
+
+
 def shape_drum_events(classified_events: list[tuple[float, str, str, float]], beats: list[float]) -> tuple[list[dict[str, Any]], list[str]]:
     warnings: list[str] = []
     working = list(classified_events)
@@ -414,9 +428,11 @@ def shape_drum_events(classified_events: list[tuple[float, str, str, float]], be
     deduped: list[tuple[float, str, str, float]] = []
     for event in shaped:
         onset, lane, label, confidence = event
+        _, _, beat_interval = nearest_beat_context(onset, beats)
+        min_same_lane_gap = effective_same_lane_gap(lane, beat_interval)
         if deduped:
             previous_onset, previous_lane, _, previous_confidence = deduped[-1]
-            if lane == previous_lane and onset - previous_onset < MIN_SAME_LANE_GAP_SECONDS:
+            if lane == previous_lane and onset - previous_onset < min_same_lane_gap:
                 deduped_count += 1
                 if confidence > previous_confidence:
                     deduped[-1] = event
