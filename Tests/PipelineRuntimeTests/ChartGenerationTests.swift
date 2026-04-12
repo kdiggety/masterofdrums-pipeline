@@ -76,7 +76,7 @@ final class ChartGenerationTests: XCTestCase {
         XCTAssertEqual(generated.normalized.beatGrid.count, 6)
         XCTAssertEqual(generated.normalized.beatGrid[1].startSeconds, 0.18, accuracy: 0.0001)
         XCTAssertEqual(generated.normalized.beatGrid[2].startSeconds, 0.31, accuracy: 0.0001)
-        XCTAssertEqual(generated.baseChart.chart.notes.map(\.tick), [173, 806])
+        XCTAssertEqual(generated.baseChart.chart.notes.map(\.tick), [160, 800])
         XCTAssertEqual(generated.baseChart.chart.notes.map(\.subdivisionIndex), [1, 5])
     }
 
@@ -105,7 +105,7 @@ final class ChartGenerationTests: XCTestCase {
         for (actual, expected) in zip(beatStarts, [0.0, 0.495, 0.99, 1.485, 1.98, 2.48, 2.98, 3.48, 3.98]) {
             XCTAssertEqual(actual, expected, accuracy: 0.0001)
         }
-        XCTAssertEqual(generated.baseChart.chart.notes.map(\.tick), [40, 1000, 1960])
+        XCTAssertEqual(generated.baseChart.chart.notes.map(\.tick), [0, 960, 1920])
     }
 
     func testGenerateWarnsWhenCandidatesAreDroppedAndMapsLaneAliases() throws {
@@ -461,6 +461,74 @@ final class ChartGenerationTests: XCTestCase {
 
         XCTAssertEqual(generated.normalized.drumEvents.map(\.eventID), ["snare-strong"])
         XCTAssertEqual(generated.baseChart.chart.notes.map(\.lane), [.snare])
+    }
+
+    func testGeneratePreservesRapidKickDoublesAcrossDistinctSubdivisionsInSameBeat() throws {
+        let analysis = makeAnalysis(raw: [
+            "beats": [0.0, 0.5, 1.0],
+            "subdivisions": [0.0, 0.083333, 0.166667, 0.25, 0.333333, 0.416667, 0.5, 0.583333, 0.666667, 0.75, 0.833333, 0.916667, 1.0],
+            "drumEvents": [
+                ["eventID": "kick-1", "label": "kick", "onsetSeconds": 0.0, "velocity": 0.95, "confidence": 0.95],
+                ["eventID": "kick-2", "label": "kick", "onsetSeconds": 0.166667, "velocity": 0.91, "confidence": 0.91],
+                ["eventID": "snare-1", "label": "snare", "onsetSeconds": 0.5, "velocity": 0.92, "confidence": 0.92]
+            ]
+        ], duration: 1.0)
+
+        let generated = ChartGenerator.generate(
+            from: analysis,
+            generatedAt: Date(timeIntervalSince1970: 0),
+            normalizedAnalysisArtifactURI: "file:///tmp/normalized.json"
+        )
+
+        XCTAssertEqual(generated.normalized.drumEvents.map(\.eventID), ["kick-1", "kick-2", "snare-1"])
+        XCTAssertEqual(generated.baseChart.chart.notes.map(\.lane), [.kick, .kick, .snare])
+        XCTAssertEqual(generated.baseChart.chart.notes.map(\.subdivisionIndex), [0, 2, 6])
+    }
+
+    func testGeneratePreservesDenseTrapBackboneAcrossOneBeatWhenSubdivisionsDiffer() throws {
+        let analysis = makeAnalysis(raw: [
+            "beats": [0.0, 0.5, 1.0],
+            "subdivisions": [0.0, 0.083333, 0.166667, 0.25, 0.333333, 0.416667, 0.5, 0.583333, 0.666667, 0.75, 0.833333, 0.916667, 1.0],
+            "drumEvents": [
+                ["eventID": "kick-1", "label": "kick", "onsetSeconds": 0.0, "velocity": 0.95, "confidence": 0.95],
+                ["eventID": "snare-ghost", "label": "snare", "onsetSeconds": 0.166667, "velocity": 0.61, "confidence": 0.61],
+                ["eventID": "kick-3", "label": "kick", "onsetSeconds": 0.333333, "velocity": 0.90, "confidence": 0.90],
+                ["eventID": "snare-2", "label": "snare", "onsetSeconds": 0.5, "velocity": 0.94, "confidence": 0.94]
+            ]
+        ], duration: 1.0)
+
+        let generated = ChartGenerator.generate(
+            from: analysis,
+            generatedAt: Date(timeIntervalSince1970: 0),
+            normalizedAnalysisArtifactURI: "file:///tmp/normalized.json"
+        )
+
+        XCTAssertEqual(generated.normalized.drumEvents.map(\.eventID), ["kick-1", "snare-ghost", "kick-3", "snare-2"])
+        XCTAssertEqual(generated.baseChart.chart.notes.map(\.lane), [.kick, .snare, .kick, .snare])
+        XCTAssertEqual(generated.baseChart.chart.notes.map(\.subdivisionIndex), [0, 2, 4, 6])
+    }
+
+    func testGenerateInfersDenserSubdivisionGridForRapidTrapKickSequence() throws {
+        let analysis = makeAnalysis(raw: [
+            "beats": [0.0, 0.5, 1.0],
+            "drumEvents": [
+                ["eventID": "kick-1", "label": "kick", "onsetSeconds": 0.0, "velocity": 0.95, "confidence": 0.95],
+                ["eventID": "kick-2", "label": "kick", "onsetSeconds": 0.125, "velocity": 0.91, "confidence": 0.91],
+                ["eventID": "kick-3", "label": "kick", "onsetSeconds": 0.1875, "velocity": 0.89, "confidence": 0.89],
+                ["eventID": "snare-1", "label": "snare", "onsetSeconds": 0.5, "velocity": 0.93, "confidence": 0.93]
+            ]
+        ], duration: 1.0)
+
+        let generated = ChartGenerator.generate(
+            from: analysis,
+            generatedAt: Date(timeIntervalSince1970: 0),
+            normalizedAnalysisArtifactURI: "file:///tmp/normalized.json"
+        )
+
+        XCTAssertEqual(generated.normalized.drumEvents.map(\.eventID), ["kick-1", "kick-2", "kick-3", "snare-1"])
+        XCTAssertEqual(generated.baseChart.chart.notes.map(\.lane), [.kick, .kick, .kick, .snare])
+        XCTAssertEqual(generated.baseChart.chart.notes.prefix(3).compactMap(\.subdivisionIndex), [0, 4, 6])
+        XCTAssertEqual(generated.baseChart.chart.notes.prefix(3).map(\.tick), [0, 120, 180])
     }
 
     func testGeneratePreservesOpenHatAccentAlongsideClosedPulseWhenKickAnchored() throws {

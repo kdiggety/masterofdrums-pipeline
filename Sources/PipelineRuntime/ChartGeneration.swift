@@ -8,7 +8,7 @@ struct ChartGenerationOutput {
 
 enum ChartGenerator {
     private static let fallbackSubdivisionsPerBeat = 4
-    private static let supportedSubdivisionCandidates = [3, 4, 6, 8, 12]
+    private static let supportedSubdivisionCandidates = [3, 4, 6, 8, 12, 16, 24]
     private static let maxClosedHihatPulsePerBeat = 1
     private static let maxHiHatTexturePerBeat = 1
     private static let sparseHatPulseBeatsInBar: Set<Int> = [0]
@@ -509,6 +509,7 @@ enum ChartGenerator {
         let isFillLike: Bool
         let continuesTomMotion: Bool
         let endsFillPhrase: Bool
+        let preservesDenseBackbone: Bool
     }
 
     private static func shapeDetectedDrumEvents(_ events: [DetectedDrumEvent]) -> [DetectedDrumEvent] {
@@ -564,6 +565,10 @@ enum ChartGenerator {
             groupedByBeat[beatIndex]?.filter { !hihatFamilyLanes.contains($0.lane) }.count ?? 0
         }
 
+        func backboneEvents(for beatIndex: Int) -> [DetectedDrumEvent] {
+            groupedByBeat[beatIndex]?.filter { backboneFamilyLanes.contains($0.lane) } ?? []
+        }
+
         var contexts: [Int: BeatShapingContext] = [:]
         for (position, beatIndex) in sortedBeatIndices.enumerated() {
             let previousBeatIndex = position > 0 ? sortedBeatIndices[position - 1] : nil
@@ -571,6 +576,9 @@ enum ChartGenerator {
             let currentTomCount = tomCount(for: beatIndex)
             let previousTomCount = previousBeatIndex.map(tomCount(for:)) ?? 0
             let nextTomCount = nextBeatIndex.map(tomCount(for:)) ?? 0
+            let currentBackboneEvents = backboneEvents(for: beatIndex)
+            let backboneSubdivisions = Set(currentBackboneEvents.compactMap(\.onsetSubdivisionIndex))
+            let preservesDenseBackbone = currentBackboneEvents.count >= 2 && backboneSubdivisions.count >= 2
             let isTomHeavy = currentTomCount > 0
             let isFillLike = currentTomCount > 0 && (nonHatCount(for: beatIndex) >= 2 || previousTomCount > 0 || nextTomCount > 0)
             let continuesTomMotion = (previousTomCount > 0) || (nextTomCount > 0)
@@ -580,7 +588,8 @@ enum ChartGenerator {
                 isTomHeavy: isTomHeavy,
                 isFillLike: isFillLike,
                 continuesTomMotion: continuesTomMotion,
-                endsFillPhrase: endsFillPhrase
+                endsFillPhrase: endsFillPhrase,
+                preservesDenseBackbone: preservesDenseBackbone
             )
         }
         return contexts
@@ -622,7 +631,7 @@ enum ChartGenerator {
         let groupedBySubdivision = Dictionary(grouping: backboneEvents) { $0.onsetSubdivisionIndex ?? Int.min }
         let orderedSubdivisionKeys = groupedBySubdivision.keys.sorted()
 
-        return orderedSubdivisionKeys.compactMap { subdivisionKey in
+        let selected = orderedSubdivisionKeys.compactMap { subdivisionKey -> DetectedDrumEvent? in
             guard let subdivisionEvents = groupedBySubdivision[subdivisionKey], let prioritized = subdivisionEvents.first else {
                 return nil
             }
@@ -643,6 +652,17 @@ enum ChartGenerator {
                 backbonePriority($0, context: context) == backbonePriority(prioritized, context: context)
             }
             return samePriorityAlternatives.sorted(by: eventPreferenceSort).first ?? prioritized
+        }
+
+        guard context.preservesDenseBackbone else {
+            return selected
+        }
+
+        return selected.sorted { lhs, rhs in
+            if lhs.onsetSeconds == rhs.onsetSeconds {
+                return lhs.lane.rawValue < rhs.lane.rawValue
+            }
+            return lhs.onsetSeconds < rhs.onsetSeconds
         }
     }
 
@@ -889,18 +909,14 @@ enum ChartGenerator {
         guard
             let subdivisionIndex = event.onsetSubdivisionIndex,
             let anchor = anchorsBySubdivisionIndex[subdivisionIndex],
-            let beatAnchors = anchorsByBeatIndex[anchor.beatIndex],
-            let beatStart = beatAnchors.first?.startSeconds
+            let beatAnchors = anchorsByBeatIndex[anchor.beatIndex]
         else {
             return beatIndex * ticksPerBeat
         }
 
-        let beatEnd = beatAnchors.last.flatMap { lastAnchor in
-            lastAnchor.durationSeconds.map { lastAnchor.startSeconds + $0 }
-        } ?? (beatStart + 60.0 / 120.0)
-        let beatDuration = max(beatEnd - beatStart, 0.0001)
-        let quantizedRelative = min(max((anchor.startSeconds - beatStart) / beatDuration, 0), 0.999)
-        let offsetTicks = Int((quantizedRelative * Double(ticksPerBeat)).rounded())
+        let subdivisionsPerBeat = max(beatAnchors.count, 1)
+        let quantizedStep = min(max(anchor.subdivisionInBeat, 0), subdivisionsPerBeat - 1)
+        let offsetTicks = Int((Double(quantizedStep) / Double(subdivisionsPerBeat) * Double(ticksPerBeat)).rounded())
         return beatIndex * ticksPerBeat + offsetTicks
     }
 
