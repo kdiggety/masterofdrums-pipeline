@@ -1069,18 +1069,59 @@ enum ChartGenerator {
 
         guard onsets.count >= 2 else { return nil }
 
+        let denseSubdivisionFloor = minimumDenseSubdivisionFloor(onsets: onsets, beatStarts: beatStarts)
+        let candidateSubdivisions = supportedSubdivisionCandidates.filter {
+            if let denseSubdivisionFloor {
+                return $0 >= denseSubdivisionFloor
+            }
+            return $0 <= 12
+        }
+
         var bestSubdivision = fallbackSubdivisionsPerBeat
         var bestScore = Double.greatestFiniteMagnitude
 
-        for subdivision in supportedSubdivisionCandidates {
+        for subdivision in candidateSubdivisions {
             let score = quantizationErrorScore(onsets: onsets, beatStarts: beatStarts, subdivisionsPerBeat: subdivision)
-            if score + 0.0001 < bestScore {
+            if score + 0.0001 < bestScore || (abs(score - bestScore) <= 0.0001 && subdivision < bestSubdivision) {
                 bestScore = score
                 bestSubdivision = subdivision
             }
         }
 
         return bestScore.isFinite ? bestSubdivision : nil
+    }
+
+    private static func minimumDenseSubdivisionFloor(onsets: [Double], beatStarts: [Double]) -> Int? {
+        guard beatStarts.count >= 2 else { return nil }
+
+        var groupedRelatives: [Int: [Double]] = [:]
+        for onset in onsets {
+            guard let beatIndex = nearestBeatIndex(for: onset, beatStarts: beatStarts) else { continue }
+            let beatStart = beatStarts[beatIndex]
+            let nextBeatStart = beatIndex + 1 < beatStarts.count
+                ? beatStarts[beatIndex + 1]
+                : beatStart + estimateFinalBeatDuration(from: beatStarts, tempoBPM: nil)
+            let beatDuration = max(nextBeatStart - beatStart, 0.0001)
+            let relative = min(max((onset - beatStart) / beatDuration, 0), 1)
+            groupedRelatives[beatIndex, default: []].append(relative)
+        }
+
+        for relatives in groupedRelatives.values {
+            let unique = Array(Set(relatives.map { round($0 * 10000) / 10000 })).sorted()
+            guard unique.count >= 3 else { continue }
+            let interior = unique.filter { $0 > 0.0 && $0 < 1.0 }
+            let offQuarterInterior = interior.filter {
+                let quarterStep = ($0 * 4.0).rounded()
+                return abs($0 - quarterStep / 4.0) > 0.02
+            }
+            guard offQuarterInterior.count >= 2 else { continue }
+            let minGap = zip(unique, unique.dropFirst()).map { $1 - $0 }.min() ?? 1.0
+            if minGap <= 0.13 {
+                return 16
+            }
+        }
+
+        return nil
     }
 
     private static func quantizationErrorScore(onsets: [Double], beatStarts: [Double], subdivisionsPerBeat: Int) -> Double {
