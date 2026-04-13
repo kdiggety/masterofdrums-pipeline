@@ -11,6 +11,8 @@ enum ChartGenerator {
     private static let supportedSubdivisionCandidates = [3, 4, 6, 8, 12, 16, 24]
     private static let maxClosedHihatPulsePerBeat = 1
     private static let maxHiHatTexturePerBeat = 1
+    private static let maxDenseClosedHihatPulsePerBeat = 2
+    private static let maxDenseHiHatTexturePerBeat = 2
     private static let sparseHatPulseBeatsInBar: Set<Int> = [0]
     private static let backboneConfidenceOverrideThreshold = 0.2
 
@@ -691,13 +693,15 @@ enum ChartGenerator {
 
         let hasKickLikeAnchor = backbone?.lane == .kick || accent?.lane == .crash
         let shouldKeepPulse = !context.isTomHeavy && (hasKickLikeAnchor || prefersSparseHatPulseWithoutAnchor(context.beatIndex))
+        let pulseLimit = context.preservesDenseBackbone ? maxDenseClosedHihatPulsePerBeat : maxClosedHihatPulsePerBeat
+        let textureLimit = context.preservesDenseBackbone ? maxDenseHiHatTexturePerBeat : maxHiHatTexturePerBeat
 
         let openAccent = preferredOpenHiHatAccent(from: uniqueHihats, hasKickLikeAnchor: hasKickLikeAnchor)
         let pulseCandidates = uniqueHihats.filter { event in
             event.lane == .hihatClosed && event.eventID != openAccent?.eventID
         }
 
-        var kept: [DetectedDrumEvent] = shouldKeepPulse ? Array(pulseCandidates.prefix(maxClosedHihatPulsePerBeat)) : []
+        var kept: [DetectedDrumEvent] = shouldKeepPulse ? Array(pulseCandidates.prefix(pulseLimit)) : []
         if let openAccent,
            !context.isTomHeavy,
            !kept.contains(where: { $0.eventID == openAccent.eventID }) {
@@ -718,8 +722,8 @@ enum ChartGenerator {
             }
         }
 
-        kept.append(contentsOf: textureCandidates.sorted(by: eventPreferenceSort).prefix(maxHiHatTexturePerBeat))
-        return Array(kept.sorted(by: eventPreferenceSort).prefix(maxClosedHihatPulsePerBeat + maxHiHatTexturePerBeat + (openAccent == nil ? 0 : 1)))
+        kept.append(contentsOf: textureCandidates.sorted(by: eventPreferenceSort).prefix(textureLimit))
+        return Array(kept.sorted(by: eventPreferenceSort).prefix(pulseLimit + textureLimit + (openAccent == nil ? 0 : 1)))
     }
 
     private static func prefersTextureOnBeat(_ beatIndex: Int) -> Bool {

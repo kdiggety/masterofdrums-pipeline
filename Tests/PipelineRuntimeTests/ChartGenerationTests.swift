@@ -554,6 +554,31 @@ final class ChartGenerationTests: XCTestCase {
         XCTAssertEqual(generated.baseChart.chart.notes.map(\.subdivisionIndex), [0, 0, 1])
     }
 
+    func testGeneratePreservesExtraClosedHatPulseWhenDenseBackboneExists() throws {
+        let analysis = makeAnalysis(raw: [
+            "beats": [0.0, 0.5, 1.0],
+            "subdivisions": [0.0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1.0],
+            "drumEvents": [
+                ["eventID": "kick-1", "label": "kick", "onsetSeconds": 0.0, "velocity": 0.95, "confidence": 0.95],
+                ["eventID": "hat-1", "label": "closed hat", "onsetSeconds": 0.0, "velocity": 0.62, "confidence": 0.62],
+                ["eventID": "hat-2", "label": "closed hat", "onsetSeconds": 0.125, "velocity": 0.58, "confidence": 0.58],
+                ["eventID": "kick-2", "label": "kick", "onsetSeconds": 0.25, "velocity": 0.90, "confidence": 0.90],
+                ["eventID": "hat-3", "label": "closed hat", "onsetSeconds": 0.375, "velocity": 0.56, "confidence": 0.56],
+                ["eventID": "snare-1", "label": "snare", "onsetSeconds": 0.5, "velocity": 0.92, "confidence": 0.92]
+            ]
+        ], duration: 1.0)
+
+        let generated = ChartGenerator.generate(
+            from: analysis,
+            generatedAt: Date(timeIntervalSince1970: 0),
+            normalizedAnalysisArtifactURI: "file:///tmp/normalized.json"
+        )
+
+        XCTAssertEqual(generated.normalized.drumEvents.map(\.eventID), ["kick-1", "hat-1", "hat-2", "kick-2", "hat-3", "snare-1"])
+        XCTAssertEqual(generated.normalized.drumEvents.map(\.lane), [.kick, .hihatClosed, .hihatClosed, .kick, .hihatClosed, .snare])
+        XCTAssertEqual(generated.baseChart.chart.notes.map(\.subdivisionIndex), [0, 0, 1, 2, 3, 4])
+    }
+
     func testGeneratePreservesTomFillMotionAndCrashTransitionWithoutHatClutter() throws {
         let analysis = makeAnalysis(raw: [
             "beats": [0.0, 0.5, 1.0, 1.5, 2.0],
