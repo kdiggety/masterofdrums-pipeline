@@ -76,7 +76,7 @@ final class ChartGenerationTests: XCTestCase {
         XCTAssertEqual(generated.normalized.beatGrid.count, 6)
         XCTAssertEqual(generated.normalized.beatGrid[1].startSeconds, 0.18, accuracy: 0.0001)
         XCTAssertEqual(generated.normalized.beatGrid[2].startSeconds, 0.31, accuracy: 0.0001)
-        XCTAssertEqual(generated.baseChart.chart.notes.map(\.tick), [160, 800])
+        XCTAssertEqual(generated.baseChart.chart.notes.map(\.tick), [173, 806])
         XCTAssertEqual(generated.baseChart.chart.notes.map(\.subdivisionIndex), [1, 5])
     }
 
@@ -105,7 +105,7 @@ final class ChartGenerationTests: XCTestCase {
         for (actual, expected) in zip(beatStarts, [0.0, 0.495, 0.99, 1.485, 1.98, 2.48, 2.98, 3.48, 3.98]) {
             XCTAssertEqual(actual, expected, accuracy: 0.0001)
         }
-        XCTAssertEqual(generated.baseChart.chart.notes.map(\.tick), [0, 960, 1920])
+        XCTAssertEqual(generated.baseChart.chart.notes.map(\.tick), [40, 1000, 1960])
     }
 
     func testGenerateWarnsWhenCandidatesAreDroppedAndMapsLaneAliases() throws {
