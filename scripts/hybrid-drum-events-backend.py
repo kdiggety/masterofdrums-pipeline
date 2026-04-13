@@ -111,7 +111,9 @@ def merge_payloads(timing_payload: dict[str, Any], event_payload: dict[str, Any]
     if not isinstance(runtime, dict):
         runtime = {}
         merged["runtime"] = runtime
-    runtime.setdefault("backend", "scripts/hybrid-drum-events-backend.py")
+    timing_runtime = dict(runtime)
+    runtime["backend"] = "scripts/hybrid-drum-events-backend.py"
+    runtime["timingBackendRuntime"] = timing_runtime
     runtime["timingBackendCommand"] = timing_command
     runtime["eventBackendCommand"] = event_command
     runtime["eventPolicy"] = event_policy
