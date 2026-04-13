@@ -914,13 +914,9 @@ enum ChartGenerator {
             return beatIndex * ticksPerBeat
         }
 
-        let beatStart = beatAnchors.first?.startSeconds ?? 0
-        let beatEnd = beatAnchors.last.flatMap { lastAnchor in
-            lastAnchor.durationSeconds.map { lastAnchor.startSeconds + $0 }
-        } ?? (beatStart + 60.0 / 120.0)
-        let beatDuration = max(beatEnd - beatStart, 0.0001)
-        let quantizedRelative = min(max((anchor.startSeconds - beatStart) / beatDuration, 0), 0.999)
-        let offsetTicks = Int((quantizedRelative * Double(ticksPerBeat)).rounded())
+        let subdivisionsPerBeat = max(beatAnchors.count, 1)
+        let quantizedStep = min(max(anchor.subdivisionInBeat, 0), subdivisionsPerBeat - 1)
+        let offsetTicks = Int((Double(quantizedStep) / Double(subdivisionsPerBeat) * Double(ticksPerBeat)).rounded())
         return beatIndex * ticksPerBeat + offsetTicks
     }
 
@@ -1073,51 +1069,18 @@ enum ChartGenerator {
 
         guard onsets.count >= 2 else { return nil }
 
-        let allowUltraDenseSubdivision = shouldAllowUltraDenseSubdivision(onsets: onsets, beatStarts: beatStarts)
-        let candidateSubdivisions = allowUltraDenseSubdivision
-            ? supportedSubdivisionCandidates
-            : supportedSubdivisionCandidates.filter { $0 <= 12 }
-
         var bestSubdivision = fallbackSubdivisionsPerBeat
         var bestScore = Double.greatestFiniteMagnitude
 
-        for subdivision in candidateSubdivisions {
+        for subdivision in supportedSubdivisionCandidates {
             let score = quantizationErrorScore(onsets: onsets, beatStarts: beatStarts, subdivisionsPerBeat: subdivision)
-            if score + 0.0001 < bestScore || (abs(score - bestScore) <= 0.0001 && subdivision > bestSubdivision) {
+            if score + 0.0001 < bestScore {
                 bestScore = score
                 bestSubdivision = subdivision
             }
         }
 
         return bestScore.isFinite ? bestSubdivision : nil
-    }
-
-    private static func shouldAllowUltraDenseSubdivision(onsets: [Double], beatStarts: [Double]) -> Bool {
-        guard beatStarts.count >= 2 else { return false }
-
-        var groupedRelatives: [Int: [Double]] = [:]
-        for onset in onsets {
-            guard let beatIndex = nearestBeatIndex(for: onset, beatStarts: beatStarts) else { continue }
-            let beatStart = beatStarts[beatIndex]
-            let nextBeatStart = beatIndex + 1 < beatStarts.count
-                ? beatStarts[beatIndex + 1]
-                : beatStart + estimateFinalBeatDuration(from: beatStarts, tempoBPM: nil)
-            let beatDuration = max(nextBeatStart - beatStart, 0.0001)
-            let relative = min(max((onset - beatStart) / beatDuration, 0), 1)
-            groupedRelatives[beatIndex, default: []].append(relative)
-        }
-
-        for relatives in groupedRelatives.values {
-            let sorted = Array(Set(relatives.map { round($0 * 10000) / 10000 })).sorted()
-            let interior = sorted.filter { $0 >= 0.20 && $0 <= 0.80 }
-            guard interior.count >= 2 else { continue }
-            let minGap = zip(interior, interior.dropFirst()).map { $1 - $0 }.min() ?? 1
-            if minGap <= 0.15 {
-                return true
-            }
-        }
-
-        return false
     }
 
     private static func quantizationErrorScore(onsets: [Double], beatStarts: [Double], subdivisionsPerBeat: Int) -> Double {
