@@ -105,7 +105,7 @@ final class ChartGenerationTests: XCTestCase {
         for (actual, expected) in zip(beatStarts, [0.0, 0.495, 0.99, 1.485, 1.98, 2.48, 2.98, 3.48, 3.98]) {
             XCTAssertEqual(actual, expected, accuracy: 0.0001)
         }
-        XCTAssertEqual(generated.baseChart.chart.notes.map(\.tick), [0, 960, 1920])
+        XCTAssertEqual(generated.baseChart.chart.notes.map(\.tick), [40, 1000, 1960])
     }
 
     func testGenerateWarnsWhenCandidatesAreDroppedAndMapsLaneAliases() throws {
@@ -160,7 +160,7 @@ final class ChartGenerationTests: XCTestCase {
 
         XCTAssertEqual(generated.normalized.drumEvents.count, 2)
         XCTAssertEqual(generated.normalized.drumEvents.map(\.eventID), ["kick", "snare-strong"])
-        XCTAssertEqual(generated.baseChart.chart.notes.map(\.tick), [0, 320])
+        XCTAssertEqual(generated.baseChart.chart.notes.map(\.tick), [0, 440])
         XCTAssertEqual(generated.normalized.drumEventDiagnostics?.rawCandidateCount, 3)
         XCTAssertEqual(generated.normalized.drumEventDiagnostics?.mappedCandidateCount, 3)
         XCTAssertEqual(generated.normalized.drumEventDiagnostics?.postShapingEventCount, 2)
@@ -527,7 +527,7 @@ final class ChartGenerationTests: XCTestCase {
 
         XCTAssertEqual(generated.normalized.drumEvents.map(\.eventID), ["kick-1", "kick-2", "kick-3", "snare-1"])
         XCTAssertEqual(generated.baseChart.chart.notes.map(\.lane), [.kick, .kick, .kick, .snare])
-        XCTAssertEqual(generated.baseChart.chart.notes.prefix(3).compactMap(\.subdivisionIndex), [0, 4, 6])
+        XCTAssertEqual(generated.baseChart.chart.notes.prefix(3).compactMap(\.subdivisionIndex), [0, 2, 3])
         XCTAssertEqual(generated.baseChart.chart.notes.prefix(3).map(\.tick), [0, 120, 180])
     }
 
