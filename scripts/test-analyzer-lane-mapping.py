@@ -126,6 +126,53 @@ def test_adtof_midi_complete_drum_kit() -> None:
             f"Label '{label}' coverage mismatch: expected {expected_notes}, got {actual_notes}"
 
 
+def test_world_percussion_mapping() -> None:
+    """Verify world percussion instruments map to appropriate lanes."""
+    world_perc_tests = {
+        # Hand drums
+        "high_bongo": "tom_high",
+        "low_bongo": "tom_low",
+        "high_conga": "tom_high",
+        "low_conga": "tom_low",
+        "high_timbale": "tom_high",
+        "low_timbale": "tom_low",
+        # Agogo
+        "high_agogo": "hihat_closed",
+        "low_agogo": "tom_mid",
+        # Shakers
+        "cabasa": "hihat_closed",
+        "maracas": "hihat_closed",
+        # Clicks
+        "claves": "snare",
+        "high_wood_block": "snare",
+        "low_wood_block": "tom_low",
+        "castanets": "snare",
+        # Whistles
+        "short_whistle": "hihat_closed",
+        "long_whistle": "hihat_open",
+        # Guiro
+        "short_guiro": "snare",
+        "long_guiro": "hihat_open",
+        # Cuica
+        "mute_cuica": "snare",
+        "open_cuica": "tom_mid",
+        # Triangle
+        "mute_triangle": "hihat_closed",
+        "open_triangle": "hihat_open",
+        # Bass
+        "surdo": "kick",
+        # Bell tree
+        "bell_tree": "hihat_closed",
+        "sleigh_bells": "hihat_closed",
+        # Vibraslap
+        "vibraslap": "snare",
+    }
+    for raw, expected in world_perc_tests.items():
+        actual = audit.map_lane(raw)
+        assert actual == expected, f"World perc '{raw}': expected '{expected}', got '{actual}'"
+    print(f"✓ world percussion mapping validated ({len(world_perc_tests)} instruments)")
+
+
 if __name__ == "__main__":
     test_expanded_alias_mapping_covers_high_value_lane_variants()
     test_adtof_adapter_maps_common_gm_lane_notes()
@@ -135,4 +182,5 @@ if __name__ == "__main__":
     test_adtof_midi_tom_coverage()
     test_adtof_midi_cymbal_coverage()
     test_adtof_midi_complete_drum_kit()
+    test_world_percussion_mapping()
     print("analyzer lane mapping tests passed")

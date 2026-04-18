@@ -6,30 +6,87 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
-KICK = {"kick", "bd", "bass_drum", "bassdrum", "bass_drum_1", "bass_drum_2", "bassdrum_1", "bassdrum_2", "kik", "kick_drum", "kickdrum"}
-SNARE = {"snare", "sd", "sn", "rimshot", "rim", "cross_stick", "side_stick", "sidestick", "snare_drum", "snaredrum", "rim_shot"}
-HH_CLOSED = {"hihat_closed", "closed_hihat", "closed_hat", "closed_hi_hat", "hhc", "hat_closed", "hi_hat_closed", "chh", "hh", "hihat", "closed_hi_hat_edge", "tight_hihat", "tight_hi_hat"}
-HH_OPEN = {"hihat_open", "open_hihat", "open_hat", "open_hi_hat", "hho", "hat_open", "hi_hat_open", "ohh", "half_open_hihat", "half_open_hi_hat", "open_hi_hat_edge"}
-TOM_LOW = {"tom_low", "low_tom", "floor_tom", "floortom", "low_floor_tom", "high_floor_tom", "floor_tom_1", "floor_tom_2", "tom_3"}
-TOM_MID = {"tom_mid", "mid_tom", "middle_tom", "mid_tom_1", "mid_tom_2", "tom_medium", "medium_tom", "rack_tom_2", "tom_2"}
-TOM_HIGH = {"tom_high", "high_tom", "rack_tom", "racktom", "high_rack_tom", "rack_tom_1", "tom_1"}
-CRASH = {"crash", "crash_cymbal", "crash_left", "crash_right", "crash_1", "crash_2", "china", "china_cymbal", "splash", "splash_cymbal"}
+KICK = {
+    "kick", "bd", "bass_drum", "bassdrum", "bass_drum_1", "bass_drum_2", "bassdrum_1", "bassdrum_2",
+    "kik", "kick_drum", "kickdrum", "surdo"
+}
+SNARE = {
+    "snare", "sd", "sn", "rimshot", "rim", "cross_stick", "side_stick", "sidestick", "snare_drum",
+    "snaredrum", "rim_shot", "vibraslap", "claves", "castanets", "short_guiro", "guiro_short",
+    "mute_cuica", "cuica_mute", "wood_block", "woodblock", "high_wood_block", "highwood_block"
+}
+HH_CLOSED = {
+    "hihat_closed", "closed_hihat", "closed_hat", "closed_hi_hat", "hhc", "hat_closed", "hi_hat_closed",
+    "chh", "hh", "hihat", "closed_hi_hat_edge", "tight_hihat", "tight_hi_hat", "pedal_hihat", "pedal_hi_hat",
+    "cowbell", "shaker", "tambourine", "cabasa", "maracas", "short_whistle", "whistle_short",
+    "high_agogo", "agogo_high", "sleigh_bells", "bell_tree", "mute_triangle", "triangle_mute"
+}
+HH_OPEN = {
+    "hihat_open", "open_hihat", "open_hat", "open_hi_hat", "hho", "hat_open", "hi_hat_open", "ohh",
+    "half_open_hihat", "half_open_hi_hat", "open_hi_hat_edge", "long_whistle", "whistle_long",
+    "long_guiro", "guiro_long", "open_triangle", "triangle_open"
+}
+TOM_LOW = {
+    "tom_low", "low_tom", "floor_tom", "floortom", "low_floor_tom", "floor_tom_1", "floor_tom_2", "tom_3",
+    "low_bongo", "bongo_low", "low_conga", "conga_low", "low_timbale", "timbale_low", "low_wood_block",
+    "lowwood_block", "woodblock_low", "lowwoodblock"
+}
+TOM_MID = {
+    "tom_mid", "mid_tom", "middle_tom", "mid_tom_1", "mid_tom_2", "tom_medium", "medium_tom", "rack_tom_2",
+    "tom_2", "low_mid_tom", "lowmid_tom", "hi_mid_tom", "himid_tom", "mid_tom_2", "low_agogo", "agogo_low",
+    "open_cuica", "cuica_open"
+}
+TOM_HIGH = {
+    "tom_high", "high_tom", "rack_tom", "racktom", "high_rack_tom", "rack_tom_1", "tom_1", "high_floor_tom",
+    "high_bongo", "bongo_high", "mute_high_conga", "conga_mute_high", "open_high_conga", "conga_open_high",
+    "high_conga", "conga_high", "high_timbale", "timbale_high"
+}
+CRASH = {
+    "crash", "crash_cymbal", "crash_left", "crash_right", "crash_1", "crash_2", "china", "china_cymbal",
+    "splash", "splash_cymbal", "chinese_cymbal"
+}
 RIDE = {"ride", "ride_cymbal", "ride_bell", "ride_1", "ride_2"}
 CLAP = {"clap", "handclap", "hand_clap"}
-PERC = {"percussion", "perc", "cowbell", "shaker", "tambourine"}
+PERC = {"percussion", "perc"}
 
 MIDI_MAP = {
+    # Kick
     35: "kick", 36: "kick",
-    37: "snare", 38: "snare", 40: "snare",
-    42: "hihat_closed", 44: "hihat_closed",
-    46: "hihat_open",
+    # Snare, Rimshot, Vibraslap, Clicks
+    37: "snare", 38: "snare", 40: "snare", 39: "clap",
+    # Hi-Hat
+    42: "hihat_closed", 44: "hihat_closed", 46: "hihat_open",
+    # Toms
     41: "tom_low", 43: "tom_low",
     45: "tom_mid",
     47: "tom_high", 48: "tom_high", 50: "tom_high",
+    # Cymbals
     49: "crash", 52: "crash", 55: "crash", 57: "crash",
     51: "ride", 53: "ride", 59: "ride",
-    39: "clap",
-    54: "percussion", 56: "percussion", 58: "percussion", 60: "percussion", 82: "percussion", 83: "percussion",
+    # Percussion (high/mid/low mapped by pitch)
+    54: "tom_high",    # Vibra Slap (high pitched)
+    56: "tom_mid",     # Cowbell (mid-high)
+    58: "hihat_closed", # Vibraphone (bright)
+    60: "tom_high",    # High Bongo
+    61: "tom_high",    # High Conga
+    62: "tom_low",     # Low Conga
+    63: "tom_high",    # High Timbale
+    64: "tom_low",     # Low Timbale
+    65: "hihat_closed", # Agogo (bright)
+    66: "hihat_closed", # Cabasa
+    67: "hihat_closed", # Maracas
+    68: "snare",       # Claves (wooden click)
+    69: "snare",       # Woodblock (click)
+    70: "tom_mid",     # Cuica (muted)
+    71: "tom_high",    # Triangle (muted)
+    72: "crash",       # Metronome Bell
+    73: "crash",       # Metronome Click
+    74: "crash",       # Bell
+    75: "hihat_closed", # Castanets
+    76: "hihat_closed", # Surdo
+    77: "hihat_closed", # Jingle Bell
+    78: "percussion", 79: "percussion", 80: "percussion", 81: "percussion",
+    82: "percussion", 83: "percussion",
 }
 
 
