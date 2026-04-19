@@ -2,7 +2,7 @@
 """Cross-validation tests: Pipeline lane names → Swift lane indices.
 
 Ensures that pipeline's normalized lane names (tom_low, tom_mid, tom_high, etc.)
-correctly convert to Swift's 5-lane model (red, yellow, blue, green, kick).
+correctly convert to Swift's 5-lane model (red, yellow, blue, green, purple).
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ PIPELINE_LANES = {
 # Swift Lane enum mapping (from ChartFileStore.laneIndex)
 # Maps pipeline lane names to Swift Lane raw values
 PIPELINE_TO_SWIFT_MAPPING = {
-    "kick": 4,              # Lane.kick
+    "kick": 4,              # Lane.purple
     "snare": 0,             # Lane.red
     "clap": 0,              # Lane.red (collapsed to snare)
     "hihat_closed": 1,      # Lane.yellow
@@ -138,7 +138,7 @@ def test_mapping_preserves_acoustic_logic() -> None:
     assert PIPELINE_TO_SWIFT_MAPPING["snare"] == 0, "Snare is sharp → red"
 
     # Bass
-    assert PIPELINE_TO_SWIFT_MAPPING["kick"] == 4, "Kick is foundational → kick lane"
+    assert PIPELINE_TO_SWIFT_MAPPING["kick"] == 4, "Kick is foundational → purple lane"
 
     print("✓ mapping preserves acoustic logic across all lanes")
 
