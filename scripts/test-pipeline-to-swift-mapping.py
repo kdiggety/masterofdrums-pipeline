@@ -30,7 +30,7 @@ PIPELINE_TO_SWIFT_MAPPING = {
     "snare": 0,             # Lane.red
     "clap": 0,              # Lane.red (collapsed to snare)
     "hihat_closed": 1,      # Lane.yellow
-    "hihat_open": 1,        # Lane.yellow (both hihats map to yellow)
+    "hihat_open": 3,        # Lane.green (open hihats with cymbals)
     "tom_low": 3,           # Lane.green
     "tom_mid": 3,           # Lane.green
     "tom_high": 2,          # Lane.blue (high toms only)
@@ -80,13 +80,12 @@ def test_tom_mapping_is_consistent() -> None:
     print("✓ tom lanes map correctly: low/mid → green, high → blue")
 
 
-def test_hihat_mapping_deduplicates_closed_and_open() -> None:
-    """Verify both closed and open hi-hats map to same lane (yellow = 1)."""
-    assert PIPELINE_TO_SWIFT_MAPPING["hihat_closed"] == PIPELINE_TO_SWIFT_MAPPING["hihat_open"], \
-        "Hi-hat closed and open should map to same lane"
-    assert PIPELINE_TO_SWIFT_MAPPING["hihat_closed"] == 1, "Hi-hats should map to yellow (1)"
+def test_hihat_mapping_separates_closed_and_open() -> None:
+    """Verify closed hi-hats map to yellow (1) and open hi-hats map to green (3)."""
+    assert PIPELINE_TO_SWIFT_MAPPING["hihat_closed"] == 1, "Closed hihat should map to yellow (1)"
+    assert PIPELINE_TO_SWIFT_MAPPING["hihat_open"] == 3, "Open hihat should map to green (3)"
 
-    print("✓ hi-hat closed/open deduplicate to yellow (1)")
+    print("✓ hihat_closed → yellow (1), hihat_open → green (3)")
 
 
 def test_crash_ride_map_to_same_lane() -> None:
@@ -118,19 +117,19 @@ def test_all_lanes_coverable_with_5_lanes() -> None:
 
 def test_mapping_preserves_acoustic_logic() -> None:
     """Verify mapping makes acoustic sense:
-    - Bright/tight sounds (hihat, cowbell) → yellow or blue
-    - Low/open sounds (crashes, rides, low toms) → green
+    - Bright/tight sounds (closed hihat, high toms) → yellow or blue
+    - Low/open sounds (open hihat, crashes, rides, low toms) → green
     - High/percussive sounds (snare, clap) → red
     - Bass → kick
     """
-    # Bright/rhythmic
-    assert PIPELINE_TO_SWIFT_MAPPING["hihat_closed"] == 1, "Closed hihat is bright → yellow"
-    assert PIPELINE_TO_SWIFT_MAPPING["hihat_open"] == 1, "Open hihat is rhythmic → yellow"
+    # Bright/tight (closed hihat only)
+    assert PIPELINE_TO_SWIFT_MAPPING["hihat_closed"] == 1, "Closed hihat is bright/tight → yellow"
 
     # High-pitched drums
     assert PIPELINE_TO_SWIFT_MAPPING["tom_high"] == 2, "High toms are bright → blue"
 
-    # Open/resonant
+    # Open/resonant (includes open hihats now)
+    assert PIPELINE_TO_SWIFT_MAPPING["hihat_open"] == 3, "Open hihat is open/resonant → green"
     assert PIPELINE_TO_SWIFT_MAPPING["crash"] == 3, "Crashes are open → green"
     assert PIPELINE_TO_SWIFT_MAPPING["ride"] == 3, "Rides are open → green"
     assert PIPELINE_TO_SWIFT_MAPPING["tom_low"] == 3, "Low toms are dark → green"
@@ -155,15 +154,16 @@ def test_mapping_inverse_is_sensible() -> None:
     # Red should have snare + clap (similar attack)
     assert set(swift_to_pipeline.get(0, [])) == {"snare", "clap"}, "Red should have snare/clap"
 
-    # Yellow should have hihat_closed + hihat_open (hihat family)
-    assert set(swift_to_pipeline.get(1, [])) == {"hihat_closed", "hihat_open"}, "Yellow should have hihats"
+    # Yellow should have hihat_closed only
+    assert set(swift_to_pipeline.get(1, [])) == {"hihat_closed"}, "Yellow should have hihat_closed"
 
     # Blue should have tom_high only
     assert swift_to_pipeline.get(2, []) == ["tom_high"], "Blue should have only high toms"
 
-    # Green should have low/mid toms + cymbals
+    # Green should have low/mid toms + open hihats + cymbals
     green_lanes = set(swift_to_pipeline.get(3, []))
     assert "tom_low" in green_lanes and "tom_mid" in green_lanes, "Green should have low/mid toms"
+    assert "hihat_open" in green_lanes, "Green should have open hihats"
     assert "crash" in green_lanes and "ride" in green_lanes, "Green should have crashes/rides"
 
     # Kick should be isolated
@@ -182,8 +182,8 @@ def test_deduplication_is_intentional() -> None:
 
     # Document intentional deduplications
     deduplications = [
-        (1, {"hihat_closed", "hihat_open"}, "Both hihats are rhythmic cymbals"),
-        (3, {"tom_low", "tom_mid", "crash", "ride", "percussion"}, "All mid/low resonant instruments"),
+        (1, {"hihat_closed"}, "Closed hihats are tight/rhythmic"),
+        (3, {"tom_low", "tom_mid", "hihat_open", "crash", "ride", "percussion"}, "All mid/low/open resonant instruments"),
         (0, {"snare", "clap"}, "Both sharp percussive attacks"),
     ]
 
@@ -200,7 +200,7 @@ if __name__ == "__main__":
     test_all_pipeline_lanes_have_swift_mapping()
     test_all_swift_mappings_are_valid()
     test_tom_mapping_is_consistent()
-    test_hihat_mapping_deduplicates_closed_and_open()
+    test_hihat_mapping_separates_closed_and_open()
     test_crash_ride_map_to_same_lane()
     test_snare_and_clap_map_together()
     test_all_lanes_coverable_with_5_lanes()
